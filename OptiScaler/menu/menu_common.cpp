@@ -1,7 +1,9 @@
 ﻿#include "pch.h"
 #include <dlssnr/DlssNr_MenuOverlay.h>
 #include "menu_common.h"
+#if defined(OPTISCALER_RTX40_MFG)
 #include <framegen/dlssg/MfgUnlock.h>
+#endif
 #include <dlssnr/DlssNr_ExposureScan.h>
 
 #include <algorithm>
@@ -3158,6 +3160,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
     auto& menuResScale = ctx.menuResScale;
     auto& primaryGpu = *ctx.primaryGpu;
 
+#if defined(OPTISCALER_RTX40_MFG)
     const bool adaEnabledForSession = MfgUnlock::EnabledForSession();
     bool adaUnlock = config->FGDLSSGAdaMfgUnlock.value_or_default();
     const bool isAda = primaryGpu.vendorId == VendorId::Nvidia &&
@@ -3180,6 +3183,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         else
             ImGui::TextWrapped("DLSSG %s: unlock unavailable for this runtime.", status.SnippetVersion.c_str());
     }
+#endif
 
     /// FG INPUTS
     static std::vector<MenuOption<FGInput>> inputOptions;

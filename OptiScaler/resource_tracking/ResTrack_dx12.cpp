@@ -1,4 +1,8 @@
 #include "pch.h"
+
+#include <dlssnr/DlssNr_ExposureScan.h>
+#include <dlssnr/DlssNr.h>
+
 #include "ResTrack_dx12.h"
 
 #include <Config.h>
@@ -104,6 +108,19 @@ static PFN_DrawInstanced o_DrawInstanced = nullptr;
 static PFN_DrawIndexedInstanced o_DrawIndexedInstanced = nullptr;
 static PFN_Reset o_Reset = nullptr;
 static PFN_ClearState o_ClearState = nullptr;
+using PFN_LateReset = HRESULT(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, ID3D12CommandAllocator*, ID3D12PipelineState*);
+static PFN_LateReset o_LateReset = nullptr;
+static HRESULT STDMETHODCALLTYPE hkLateReset(ID3D12GraphicsCommandList* cmd, ID3D12CommandAllocator* allocator,
+                                             ID3D12PipelineState* pipeline)
+{
+    const auto result = o_LateReset(cmd, allocator, pipeline);
+    if (SUCCEEDED(result)) DlssNr::FinishedPictureResetCommandList(cmd);
+    return result;
+}
+
+using PFN_ExecuteCommandLists = void(STDMETHODCALLTYPE*)(ID3D12CommandQueue*, UINT, ID3D12CommandList* const*);
+static PFN_ExecuteCommandLists o_ExecuteCommandLists = nullptr;
+
 
 static PFN_OMSetRenderTargets o_OMSetRenderTargets = nullptr;
 static PFN_SetGraphicsRootDescriptorTable o_SetGraphicsRootDescriptorTable = nullptr;
@@ -686,6 +703,11 @@ void ResTrack_Dx12::hkCreateUnorderedAccessView(ID3D12Device* This, ID3D12Resour
         }
     }
 
+    // Every unordered access view the game makes passes through here, which is the one place a
+    // buffer shaped like an exposure can be spotted without knowing anything about the game. Silent
+    // and cheap for everything that does not match, and inert unless the scan is switched on.
+    DlssNr::ExposureScan::NoteUav(pResource, pDesc);
+
     o_CreateUnorderedAccessView(This, pResource, pCounterResource, pDesc, DestDescriptor);
 
     ResourceInfo resInfo {};
@@ -716,6 +738,12 @@ void ResTrack_Dx12::hkCreateUnorderedAccessView(ID3D12Device* This, ID3D12Resour
 }
 
 #pragma endregion
+
+static void STDMETHODCALLTYPE hkNrExecuteCommandLists(ID3D12CommandQueue* queue, UINT count, ID3D12CommandList* const* lists)
+{
+    o_ExecuteCommandLists(queue, count, lists);
+    DlssNr::FinishedPictureSubmitted(queue, count, lists);
+}
 
 #pragma region Heap hooks
 
@@ -2572,6 +2600,75 @@ void ResTrack_Dx12::HookCommandList(ID3D12Device* InDevice)
     }
 }
 
+static void HookNrQueue(ID3D12Device* device);
+void ResTrack_Dx12::HookLateNrQueue(ID3D12Device* device)
+{
+    static std::mutex hookMutex;
+    std::lock_guard<std::mutex> lock(hookMutex);
+    HookNrQueue(device);
+    if (o_LateReset) return;
+    ID3D12CommandAllocator* allocator = nullptr;
+    ID3D12GraphicsCommandList* cmd = nullptr;
+    if (SUCCEEDED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator))))
+    {
+        if (SUCCEEDED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, nullptr, IID_PPV_ARGS(&cmd))))
+        {
+            ID3D12GraphicsCommandList* real = nullptr;
+            if (!CheckForRealObject(__FUNCTION__, cmd, (IUnknown**)&real)) real = cmd;
+            o_LateReset = (PFN_LateReset)(*(void***)real)[10];
+            DetourTransactionBegin();
+            DetourUpdateThread(GetCurrentThread());
+            DetourAttach(&(PVOID&)o_LateReset, hkLateReset);
+            if (DetourTransactionCommit() != NO_ERROR) o_LateReset = nullptr;
+            cmd->Close();
+            cmd->Release();
+        }
+        allocator->Release();
+    }
+}
+
+static void HookNrQueue(ID3D12Device* InDevice)
+{
+    if (o_ExecuteCommandLists != nullptr)
+        return;
+
+    ID3D12CommandQueue* queue = nullptr;
+    D3D12_COMMAND_QUEUE_DESC queueDesc = {};
+    queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+    queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+    queueDesc.NodeMask = 0;
+    queueDesc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+
+    auto hr = InDevice->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&queue));
+
+    if (hr == S_OK)
+    {
+        ID3D12CommandQueue* realQueue = nullptr;
+        if (!CheckForRealObject(__FUNCTION__, queue, (IUnknown**) &realQueue))
+            realQueue = queue;
+
+        // Get the vtable pointer
+        PVOID* pVTable = *(PVOID**) realQueue;
+
+        o_ExecuteCommandLists = (PFN_ExecuteCommandLists) pVTable[10];
+
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
+
+        if (o_ExecuteCommandLists != nullptr)
+            DetourAttach(&(PVOID&) o_ExecuteCommandLists, hkNrExecuteCommandLists);
+
+        auto detourResult = DetourTransactionCommit();
+        if (detourResult != NO_ERROR)
+        {
+            LOG_ERROR("Failed to hook CommandList methods: {:X}", detourResult);
+            o_ExecuteCommandLists = nullptr;
+        }
+
+        queue->Release();
+    }
+}
+
 void ResTrack_Dx12::HookDevice(ID3D12Device* device)
 {
     if (o_CreateDescriptorHeap != nullptr || State::Instance().activeFgInput == FGInput::NvngxFG)
@@ -2728,6 +2825,12 @@ void ResTrack_Dx12::ReleaseDeviceHooks()
     if (o_Dispatch != nullptr)
         DetourDetach(&(PVOID&) o_Dispatch, hkDispatch);
 
+    if (o_LateReset != nullptr)
+        DetourDetach(&(PVOID&) o_LateReset, hkLateReset);
+
+
+
+
     auto detourResult = DetourTransactionCommit();
     if (detourResult != NO_ERROR)
     {
@@ -2752,6 +2855,7 @@ void ResTrack_Dx12::ReleaseDeviceHooks()
         o_DrawIndexedInstanced = nullptr;
         o_DrawInstanced = nullptr;
         o_Dispatch = nullptr;
+        o_LateReset = nullptr;
 
         _bindingTrackingEnabled.store(false, std::memory_order_release);
         ClearBindingStates();
@@ -2814,6 +2918,11 @@ void ResTrack_Dx12::ReleaseHooks()
     if (o_Dispatch != nullptr)
         DetourDetach(&(PVOID&) o_Dispatch, hkDispatch);
 
+    if (o_LateReset != nullptr)
+        DetourDetach(&(PVOID&) o_LateReset, hkLateReset);
+
+
+
     auto detourResult = DetourTransactionCommit();
     if (detourResult != NO_ERROR)
     {
@@ -2833,6 +2942,7 @@ void ResTrack_Dx12::ReleaseHooks()
         _bindingTrackingEnabled.store(false, std::memory_order_release);
 
         ClearBindingStates();
+        o_LateReset = nullptr;
     }
 }
 

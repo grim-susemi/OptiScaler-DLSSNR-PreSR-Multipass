@@ -743,6 +743,7 @@ class ResTrack_Dx12
     static void OnSetComputeRootSignature(ID3D12GraphicsCommandList* commandList, ID3D12RootSignature* rootSignature);
 
     static void HookDevice(ID3D12Device* device);
+    static void HookLateNrQueue(ID3D12Device* device);
     static void ReleaseHooks();
     static void ReleaseDeviceHooks();
     static void ClearPossibleHudless();

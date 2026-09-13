@@ -2,6 +2,7 @@
 #include "dx11_with_dx12_sc.h"
 
 #include <with_dx12/with_dx12.h>
+#include <dlssnr/DlssNrFeature_Dx12.h>
 #include <with_dx12/dx11_with_dx12_sync.h>
 
 #include <hooks/FG_Hooks.h>
@@ -395,6 +396,10 @@ HRESULT STDMETHODCALLTYPE Dx11wDx12SC::Present(UINT SyncInterval, UINT Flags)
     if (!_WaitForInteropCopyOnPresentQueue())
         return DXGI_ERROR_DEVICE_REMOVED;
 
+    // The bridge has already copied the final DX11 image to this DX12 backbuffer.
+    // Run on the presenting queue after its copy wait, including when FG is paused.
+    DlssNr::ApplyToFinishedPicture(_fgSwapChain, _fg->GetCommandQueue());
+
     const bool fgHookedPresenter =
         State::Instance().currentFGSwapchain == _fgSwapChain && !FGHooks::IsDx12InteropPresentSC(_fgSwapChain);
 
@@ -479,6 +484,8 @@ HRESULT STDMETHODCALLTYPE Dx11wDx12SC::ResizeBuffers(UINT BufferCount, UINT Widt
     LOG_DEBUG("Dx11wDx12SC ResizeBuffers: count {}, size {}x{}, format {}, flags {:X}", BufferCount, Width, Height,
               (UINT) NewFormat, SwapChainFlags);
 
+    if (!DlssNr::WaitForFinishedPicture())
+        return DXGI_ERROR_DEVICE_REMOVED;
     const bool skipFgResize = IsSame(_fgSwapChain, BufferCount, Width, Height, NewFormat, SwapChainFlags);
     const bool synchronizeXeFGPresent = skipFgResize && State::Instance().activeFgOutput == FGOutput::XeFG &&
                                         State::Instance().swapchainInteropApi == SwapchainInteropApi::Dx11wDx12;
@@ -711,7 +718,12 @@ HRESULT STDMETHODCALLTYPE Dx11wDx12SC::CheckColorSpaceSupport(DXGI_COLOR_SPACE_T
 HRESULT STDMETHODCALLTYPE Dx11wDx12SC::SetColorSpace1(DXGI_COLOR_SPACE_TYPE ColorSpace)
 {
     if (_fgSwapChain != nullptr)
-        return _fgSwapChain->SetColorSpace1(ColorSpace);
+    {
+        const auto result = _fgSwapChain->SetColorSpace1(ColorSpace);
+        if (SUCCEEDED(result))
+            DlssNr::FinishedPictureColorSpace(_fgSwapChain, ColorSpace);
+        return result;
+    }
 
     return _real3 != nullptr ? _real3->SetColorSpace1(ColorSpace) : DXGI_ERROR_DEVICE_REMOVED;
 }
@@ -723,6 +735,8 @@ HRESULT STDMETHODCALLTYPE Dx11wDx12SC::ResizeBuffers1(UINT BufferCount, UINT Wid
     LOG_DEBUG("Dx11wDx12SC ResizeBuffers1: count {}, size {}x{}, format {}, flags {:X}", BufferCount, Width, Height,
               (UINT) Format, SwapChainFlags);
 
+    if (!DlssNr::WaitForFinishedPicture())
+        return DXGI_ERROR_DEVICE_REMOVED;
     if (_real3 == nullptr)
         return ResizeBuffers(BufferCount, Width, Height, Format, SwapChainFlags);
 

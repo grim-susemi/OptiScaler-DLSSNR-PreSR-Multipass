@@ -116,19 +116,18 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     // Keep its layout unchanged and retain the last valid exposure if a sample is unusable.
     auto* exposure = static_cast<NVSDK_NGX_Resource_VK*>(frame.ExposureTexture);
     const float preExposure = frame.PreExposure;
-    const bool havePre = true;
 
     if (!saidExposure)
     {
         saidExposure = true;
         LOG_INFO("DLSS-NR Vulkan: exposure from the game: DLSS.Pre.Exposure {}, ExposureTexture {}",
-                 havePre ? std::to_string(preExposure) : std::string("not supplied"),
+                 preExposure,
                  exposure != nullptr ? "supplied" : "not supplied");
     }
 
     state.exposureOffered = exposure != nullptr;
 
-    if (havePre && std::isfinite(preExposure) && preExposure > 0.0f)
+    if (std::isfinite(preExposure) && preExposure > 0.0f)
         state.gamePreExposure = preExposure;
 
     // Take the grid written four frames ago. Retired by now, so this reads mapped memory rather than
@@ -161,10 +160,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
                  state.gameExposure, state.gamePreExposure, state.gamePreExposure / state.gameExposure);
     }
 
-    if (colour->Type != NVSDK_NGX_RESOURCE_VK_TYPE_VK_IMAGEVIEW ||
-        depth->Type != NVSDK_NGX_RESOURCE_VK_TYPE_VK_IMAGEVIEW ||
-        motion->Type != NVSDK_NGX_RESOURCE_VK_TYPE_VK_IMAGEVIEW ||
-        colour->Resource.ImageViewInfo.ImageView == VK_NULL_HANDLE ||
+    if (colour->Resource.ImageViewInfo.ImageView == VK_NULL_HANDLE ||
         depth->Resource.ImageViewInfo.ImageView == VK_NULL_HANDLE ||
         motion->Resource.ImageViewInfo.ImageView == VK_NULL_HANDLE)
         return false;

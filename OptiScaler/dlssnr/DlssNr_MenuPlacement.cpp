@@ -12,7 +12,7 @@
 namespace DlssNr::MenuSections
 {
 
-void RenderPlacement(Config* config, float menuResScale)
+void RenderPlacement(Config* config)
 {
     const bool enabled = config->DlssNrEnabled.value_or_default();
     const bool finishedPicture = config->DlssNrFinishedPicture.value_or_default();
@@ -42,19 +42,13 @@ void RenderPlacement(Config* config, float menuResScale)
 
 }
 
-void RenderStatus(Config* config, float menuResScale)
+void RenderStatus(Config* config)
 {
     const bool enabled = config->DlssNrEnabled.value_or_default();
     const bool finishedPicture = config->DlssNrFinishedPicture.value_or_default();
-    // Either backend. The two keep separate state, and on a native Vulkan game the D3D12 side
-    // is never touched -- so asking only that one reports "waiting for the upscaler" over a pass
-    // that is demonstrably running.
     const bool vulkan = DlssNr::IsRunningVk();
 
-    // Turning the pass off does not release the model, so the feature handle stays alive and
-    // IsRunning keeps answering yes. Reporting a cost from that was wrong in the way that matters
-    // most: the toggle is how anyone A/Bs this, so the one moment the number is read is the one
-    // moment it describes the frame before last.
+    // An existing model handle does not mean NR is enabled this frame.
     if (!enabled)
     {
         ImGui::TextDisabled("NR off.");
@@ -85,21 +79,14 @@ void RenderStatus(Config* config, float menuResScale)
         {
             ImGui::TextWrapped("The private edit-upscale path requires DirectX 12 or its bridge. Disable separate edit upscaling to use native Vulkan NR.");
         }
-        else if (enabled)
+        else
             ImGui::TextUnformatted("Waiting for the upscaler to run.");
     }
     else
     {
-        // The elapsed time belongs here rather than only in the upscaler's breakdown: that tooltip needs
-        // OptiScaler's own upscaler to have run, and with native DLSS passing through there is
-        // nothing in it to hang this off.
-        // Either backend's timer. They measure the same thing by different means, and only one
-        // of them is running.
         const auto ms = vulkan ? DlssNr::LastGpuTimeVk() : DlssNr::LastGpuTime();
 
-        // With "Apply the model" off the pass STILL RUNS (so Hold-frame A/B can toggle its edit on
-        // a frozen frame) -- it only outputs the clean frame.
-        // Enable Neural Rendering off stops the work.
+        // Hiding the edit keeps model evaluation running.
         const char* runSuffix = !config->DlssNrApplyModel.value_or_default() ? "  (model running, edit hidden)" : "";
 
         // Keep the running indicator green, using the theme's HDR-adjusted text brightness.

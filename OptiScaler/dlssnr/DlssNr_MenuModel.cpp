@@ -12,17 +12,15 @@ namespace DlssNr::MenuSections
 
 // Model tuning rebuilds the feature; commit slider changes only on release.
 template <typename Option>
-static bool DeferredSlider(const char* label, Option* opt, float mn, float mx, float def, const char* fmt = "%.2f",
-                           bool inheritReset = false)
+static void DeferredSlider(const char* label, Option* opt, float mn, float mx, float def, bool inheritReset = false)
 {
     static std::unordered_map<ImGuiID, float> pending;
     const ImGuiID id = ImGui::GetID(label);
 
     auto it = pending.find(id);
-    float value = it != pending.end() ? it->second : (opt->has_value() ? opt->value() : def);
-    bool changed = false;
+    float value = it != pending.end() ? it->second : (opt->value_or(def));
 
-    if (ImGui::SliderFloat(label, &value, mn, mx, fmt))
+    if (ImGui::SliderFloat(label, &value, mn, mx, "%.2f"))
         pending[id] = value;
 
     if (ImGui::IsItemDeactivatedAfterEdit())
@@ -33,7 +31,6 @@ static bool DeferredSlider(const char* label, Option* opt, float mn, float mx, f
         {
             *opt = std::clamp(committed->second, mn, mx);
             pending.erase(committed);
-            changed = true;
         }
     }
 
@@ -47,7 +44,6 @@ static bool DeferredSlider(const char* label, Option* opt, float mn, float mx, f
         else
             *opt = def;
         pending.erase(id);
-        changed = true;
     }
 
     if (std::strcmp(label, "Intensity") == 0)
@@ -58,12 +54,11 @@ static bool DeferredSlider(const char* label, Option* opt, float mn, float mx, f
         HelpMarker("Broad lighting changes. Later passes default to 0.");
     else if (std::strcmp(label, "Skin structure") == 0)
         HelpMarker("Skin detail. -1 follows Local structure.");
-    return changed;
 }
 
 // An absent later-pass setting inherits pass 1. The first combo item represents that absence; the
 // remaining items map directly to the model's zero-based profile values.
-static bool InheritedProfileCombo(const char* label, CustomOptional<uint32_t, NoDefault>* opt, const char* const* names,
+static void InheritedProfileCombo(const char* label, CustomOptional<uint32_t, NoDefault>* opt, const char* const* names,
                                   int nameCount)
 {
     int selected = 0;
@@ -72,17 +67,16 @@ static bool InheritedProfileCombo(const char* label, CustomOptional<uint32_t, No
         selected = std::clamp((int) opt->value(), 0, nameCount - 2) + 1;
 
     if (!ImGui::Combo(label, &selected, names, nameCount))
-        return false;
+        return;
 
     if (selected == 0)
         *opt = std::optional<uint32_t> {};
     else
         *opt = (uint32_t) (selected - 1);
 
-    return true;
 }
 
-void RenderModel(Config* config, float menuResScale)
+void RenderModel(Config* config)
 {
     bool unlockPasses = config->DlssNrUnlockPasses.value_or_default();
     const int menuPassLimit = unlockPasses ? 10 : 2;
@@ -136,14 +130,13 @@ void RenderModel(Config* config, float menuResScale)
     {
         InheritedProfileCombo("Style", &config->DlssNrPass2Style, inheritedStyles, IM_ARRAYSIZE(inheritedStyles));
         DeferredSlider("Intensity", &config->DlssNrPass2Intensity, 0.0f, 2.0f,
-                       config->DlssNrIntensity.value_or_default(), "%.2f", true);
+                       config->DlssNrIntensity.value_or_default(), true);
         DeferredSlider("Local structure", &config->DlssNrPass2LocalStructure, 0.0f, 2.0f,
-                       config->DlssNrLocalStructure.value_or_default(), "%.2f", true);
-        DeferredSlider("Local tone", &config->DlssNrPass2LocalTone, 0.0f, 2.0f, 0.0f, "%.2f", true);
+                       config->DlssNrLocalStructure.value_or_default(), true);
+        DeferredSlider("Local tone", &config->DlssNrPass2LocalTone, 0.0f, 2.0f, 0.0f, true);
         DeferredSlider("Skin structure", &config->DlssNrPass2SkinStructure, -1.0f, 2.0f,
-                       config->DlssNrSkinStructure.value_or_default(), "%.2f", true);
-        bool mask = config->DlssNrPass2AutoMask.has_value() ? config->DlssNrPass2AutoMask.value()
-                                                            : config->DlssNrAutoMask.value_or_default();
+                       config->DlssNrSkinStructure.value_or_default(), true);
+        bool mask = config->DlssNrPass2AutoMask.value_or(config->DlssNrAutoMask.value_or_default());
         if (ImGui::Checkbox("Auto skin mask", &mask))
             config->DlssNrPass2AutoMask = mask;
         ImGui::SameLine();

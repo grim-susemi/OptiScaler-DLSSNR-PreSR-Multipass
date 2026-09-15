@@ -12,7 +12,7 @@
 namespace DlssNr::MenuSections
 {
 
-void RenderInput(Config* config, float menuResScale)
+void RenderInput(Config* config)
 {
     // Resolution changes rebuild model resources; commit only after releasing the slider.
     static int pendingScale = -1;
@@ -47,8 +47,7 @@ void RenderInput(Config* config, float menuResScale)
     {
         const bool reduced = config->DlssNrWorkingScale.value_or_default() < 0.999f;
 
-        if (!reduced)
-            ImGui::BeginDisabled();
+        ImGui::BeginDisabled(!reduced);
 
         static const char* enlargeNames[] = { "Classic", "Matched residual", "Matched residual + DLSS" };
         int enlarge = (int) std::min(config->DlssNrTransfer.value_or_default(), 2u);
@@ -56,8 +55,7 @@ void RenderInput(Config* config, float menuResScale)
         if (ImGui::Combo("Enlargement", &enlarge, enlargeNames, IM_ARRAYSIZE(enlargeNames)))
             config->DlssNrTransfer = (uint32_t) enlarge;
 
-        if (!reduced)
-            ImGui::EndDisabled();
+        ImGui::EndDisabled();
 
         HelpMarker("Below 100%: enlarge the output or the NR difference. DLSS requires post-upscale DX12 processing.");
     }
@@ -198,28 +196,14 @@ void RenderInput(Config* config, float menuResScale)
         }
         else if (wpSource == 1)
         {
-            const bool ofScan = false;
-
-            float trim =
-                ofScan ? config->DlssNrScanTrim.value_or_default() : config->DlssNrWhitePointTrim.value_or_default();
-
-            if (ImGui::SliderFloat(ofScan ? "Trim (x the scan)" : "Trim (x the game's exposure)", &trim, 0.25f, 4.0f,
+            float trim = config->DlssNrWhitePointTrim.value_or_default();
+            if (ImGui::SliderFloat("Trim (x the game's exposure)", &trim, 0.25f, 4.0f,
                                    "%.2fx", ImGuiSliderFlags_Logarithmic))
-            {
-                if (ofScan)
-                    config->DlssNrScanTrim = std::clamp(trim, 0.25f, 4.0f);
-                else
-                    config->DlssNrWhitePointTrim = std::clamp(trim, 0.25f, 4.0f);
-            }
+                config->DlssNrWhitePointTrim = std::clamp(trim, 0.25f, 4.0f);
 
             ImGui::SameLine();
             if (ImGui::SmallButton("Reset##wptrim"))
-            {
-                if (ofScan)
-                    config->DlssNrScanTrim = 1.0f;
-                else
-                    config->DlssNrWhitePointTrim = 1.0f;
-            }
+                config->DlssNrWhitePointTrim = 1.0f;
 
             HelpMarker("Exposure multiplier. 1 = unchanged.");
         }

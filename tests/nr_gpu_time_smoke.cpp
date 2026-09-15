@@ -34,7 +34,7 @@ try
     check(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&completed)));
     HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     expect(event != nullptr, "event creation failed");
-    DlssNrGpuTime timer(device.Get(), "smoke");
+    DlssNrGpuTime timer(device.Get());
     std::array<ComPtr<ID3D12CommandAllocator>, 9> allocators;
     std::array<ComPtr<ID3D12GraphicsCommandList>, 9> lists;
     for (unsigned i = 0; i < lists.size(); ++i)
@@ -46,7 +46,7 @@ try
     }
     for (UINT64 round = 1; round <= 3; ++round)
     {
-        const auto previous = timer.ReadGpuTime(queue.Get());
+        const auto previous = timer.ReadGpuTime();
         // Hold the GPU behind a CPU-controlled gate. A CPU frame count cannot make queries ready.
         check(queue->Wait(gate.Get(), round));
         for (unsigned i = 0; i < lists.size(); ++i)
@@ -60,18 +60,18 @@ try
             ID3D12CommandList* submitted[] { lists[i].Get() };
             queue->ExecuteCommandLists(1, submitted);
             timer.Submitted(queue.Get(), 1, submitted);
-            expect(timer.ReadGpuTime(queue.Get()) == previous, "read an unfinished GPU sample");
+            expect(timer.ReadGpuTime() == previous, "read an unfinished GPU sample");
         }
         if (round == 2)
         {
             timer.ClearLast();
-            expect(!timer.ReadGpuTime(queue.Get()), "placement change retained an old timing");
+            expect(!timer.ReadGpuTime(), "placement change retained an old timing");
         }
         check(queue->Signal(completed.Get(), round));
         check(gate->Signal(round));
         check(completed->SetEventOnCompletion(round, event));
         expect(WaitForSingleObject(event, 10000) == WAIT_OBJECT_0, "GPU completion timed out");
-        auto result = timer.ReadGpuTime(queue.Get());
+        auto result = timer.ReadGpuTime();
         if (round == 2)
             expect(!result, "an older in-flight sample repopulated the cleared display");
         else

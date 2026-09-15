@@ -46,7 +46,7 @@ class DlssNrGpuTime
     }
 
   public:
-    DlssNrGpuTime(ID3D12Device* device, [[maybe_unused]] const char* name)
+    explicit DlssNrGpuTime(ID3D12Device* device)
     {
         D3D12_QUERY_HEAP_DESC queryDesc { D3D12_QUERY_HEAP_TYPE_TIMESTAMP, Count * 2, 0 };
         if (FAILED(device->CreateQueryHeap(&queryDesc, IID_PPV_ARGS(&queries)))) return;
@@ -122,7 +122,7 @@ class DlssNrGpuTime
         lastSequence = sequence; // older, in-flight samples must not repopulate the display
     }
 
-    std::optional<double> ReadGpuTime([[maybe_unused]] ID3D12CommandQueue* queue)
+    std::optional<double> ReadGpuTime()
     {
         Collect();
         return last;

@@ -8,7 +8,7 @@
 namespace DlssNr::MenuSections
 {
 
-void RenderBlend(Config* config, float menuResScale)
+void RenderBlend(Config* config)
 {
     if (config->DlssNrFinishedPicture.value_or_default() &&
         (config->DlssNrRunBeforeSr.value_or_default() || config->DlssNrDeferredDlss.value_or_default()))
@@ -85,7 +85,7 @@ void RenderBlend(Config* config, float menuResScale)
     HelpMarker("Limit pixel brightening and darkening.");
 }
 
-void RenderInspect(Config* config, float menuResScale)
+void RenderInspect(Config* config)
 {
     bool held = config->DlssNrHoldFrame.value_or_default();
     if (ImGui::Checkbox("Hold frame", &held))

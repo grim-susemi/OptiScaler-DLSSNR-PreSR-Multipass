@@ -112,29 +112,29 @@ void RenderMenu(Config* config, float menuResScale)
         PipelineUi::Draw(view, selected);
         ImGui::Separator();
         ImGui::Spacing();
-        RenderStatus(config, menuResScale);
+        RenderStatus(config);
         ImGui::SeparatorText(PipelineUi::SectionName(selected));
         ImGui::PushItemWidth(std::min(220.0f * menuResScale, ImGui::GetContentRegionAvail().x * 0.42f));
         switch (selected)
         {
         case PipelineUi::Section::Placement:
-            RenderPlacement(config, menuResScale);
+            RenderPlacement(config);
             break;
         case PipelineUi::Section::Input:
-            RenderInput(config, menuResScale);
+            RenderInput(config);
             break;
         case PipelineUi::Section::Model:
-            RenderModel(config, menuResScale);
+            RenderModel(config);
             break;
         case PipelineUi::Section::Blend:
-            RenderBlend(config, menuResScale);
+            RenderBlend(config);
             break;
         }
         ImGui::PopItemWidth();
         if (ImGui::CollapsingHeader("Inspect NR"))
         {
             ImGui::PushItemWidth(std::min(220.0f * menuResScale, ImGui::GetContentRegionAvail().x * 0.42f));
-            RenderInspect(config, menuResScale);
+            RenderInspect(config);
             ImGui::PopItemWidth();
         }
     }

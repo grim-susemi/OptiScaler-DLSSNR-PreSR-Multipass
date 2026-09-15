@@ -16,9 +16,18 @@ auto DlssNr_Dx12::State::DeferredSrContext::Cancel() -> void
         current->reset = true;
 }
 
-auto DlssNr_Dx12::State::DeferredSrContext::Collect() -> void
+auto DlssNr_Dx12::State::DeferredSrContext::RetireCurrent() -> void
 {
-    std::erase_if(retired, [](const auto& g) { return g->Idle(); });
+    if (!current)
+        return;
+    auto* retired = current.release();
+    ++retiredCount;
+    lifetime.Retire([this, retired]
+    {
+        delete retired;
+        --retiredCount;
+    });
+    lifetime.BeginGeneration();
 }
 
 auto DlssNr_Dx12::State::DeferredSrContext::UInt(NVSDK_NGX_Parameter* p, const char* key, unsigned fallback) -> unsigned
@@ -57,26 +66,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::Allocate(Generation& g) -> bool
                  g.w, g.h);
     }
     g.codec = std::make_unique<DlssNr_Dx12>("Deferred NR contribution", g.device);
-    if (!g.codec->IsInit())
-        return false;
-    D3D12_QUERY_HEAP_DESC query {};
-    query.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
-    query.Count = MarkerCount;
-    if (FAILED(g.device->CreateQueryHeap(&query, IID_PPV_ARGS(&g.queries))))
-        return false;
-    auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK);
-    auto desc = CD3DX12_RESOURCE_DESC::Buffer(MarkerCount * sizeof(UINT64));
-    if (FAILED(g.device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                 D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-                                                 IID_PPV_ARGS(&g.readback))))
-        return false;
-    void* mapped = nullptr;
-    if (FAILED(g.readback->Map(0, nullptr, &mapped)))
-        return false;
-    g.completed = static_cast<volatile UINT64*>(mapped);
-    for (unsigned i = 0; i < MarkerCount; ++i)
-        g.completed[i] = 0;
-    return true;
+    return g.codec->IsInit();
 }
 
 auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cmd, NVSDK_NGX_Parameter* source, unsigned long long epoch,
@@ -104,7 +94,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
             }
         }
     } resetOnGap { *this, epoch };
-    Collect();
+    lifetime.Collect();
     const auto& cfg = *Config::Instance();
     if (cfg.DlssNrDebugView.value_or_default() != 0 ||
         cfg.DlssNrCompare.value_or_default() != 0 || cfg.DlssNrShowSkinMask.value_or_default() ||
@@ -189,11 +179,11 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
                     current->outputFormat != outDesc.Format || current->flags != flags))
     {
         owner.late.Cancel();
-        retired.push_back(std::move(current));
+        RetireCurrent();
     }
     if (!current)
     {
-        if (retired.size() >= 4)
+        if (retiredCount >= 4)
         {
             device->Release();
             Say("waiting for retired GPU work; clean SR frame retained");
@@ -249,12 +239,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
     g.began = true;
     g.lastBeginEpoch = epoch;
     owner.lifetime.Record(cmd);
-    Use use(g, cmd);
-    if (!use.valid)
-    {
-        Say("waiting for GPU completion slots; clean SR frame retained");
-        return;
-    }
+    lifetime.Record(cmd);
     if (!g.upscaler)
     {
         ScopedNrStateEnvelope envelope(cmd);
@@ -531,13 +516,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::After(ID3D12GraphicsCommandList* cmd
         return;
     }
     owner.lifetime.Record(cmd);
-    Use use(g, cmd);
-    if (!use.valid)
-    {
-        g.reset = true;
-        Say("waiting for GPU completion slots; clean SR frame retained");
-        return;
-    }
+    lifetime.Record(cmd);
     ScopedNrStateEnvelope envelope(cmd);
     if (!g.upscaler->Evaluate(cmd, g.frame))
     {
@@ -609,19 +588,6 @@ auto DlssNr_Dx12::State::DeferredSrContext::After(ID3D12GraphicsCommandList* cmd
 auto DlssNr_Dx12::State::DeferredSrContext::ReleaseResources() -> void
 {
     Cancel();
-    if (owner.lifetime.Idle())
-    {
-        // Also covers discarded recordings whose GPU timestamp was never written.
-        current.reset();
-        retired.clear();
-        return;
-    }
-    if (current)
-        retired.push_back(std::move(current));
-    Collect();
-    // Never free feature histories, descriptors or surfaces referenced by an unsubmitted/in-flight
-    // list. At shutdown only, retain uncompleted generations for process teardown rather than UAF.
-    for (auto& g : retired)
-        (void) g.release();
-    retired.clear();
+    RetireCurrent();
+    lifetime.Collect();
 }

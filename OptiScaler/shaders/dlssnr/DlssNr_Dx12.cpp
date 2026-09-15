@@ -224,7 +224,7 @@ bool DlssNr_Dx12::ReadyToDestroy()
     _state->CollectEnlargers();
     if (_state->collectingEnlargers) return false;
     if (!_state->retiredEnlargers.empty() || (_state->enlarger && !_state->enlarger->lifetime.Idle())) return false;
-    if (!_state->lifetime.Idle()) return false;
+    if (!_state->lifetime.Idle() || !_state->deferredSr.lifetime.Idle()) return false;
     for (auto& model : _state->nr.models)
         if (!model.Idle()) return false;
     for (const auto& slot : _state->late.slots)

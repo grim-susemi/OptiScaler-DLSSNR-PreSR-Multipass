@@ -172,10 +172,10 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
 
     ResTrack_Dx12::HookLateNrQueue(device);
     if (gpuTime == nullptr)
-        gpuTime = std::make_unique<DlssNrGpuTime>(device, "total");
+        gpuTime = std::make_unique<DlssNrGpuTime>(device);
 
     if (ngxTime == nullptr)
-        ngxTime = std::make_unique<DlssNrGpuTime>(device, "model");
+        ngxTime = std::make_unique<DlssNrGpuTime>(device);
 
     gpuTime->Start(cmdList);
 
@@ -481,7 +481,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     if (compositionSucceeded)
         ++nr.successfulDispatches;
 
-    EndGpuTiming(cmdList, timingQueue);
+    EndGpuTiming(cmdList);
 
     // Restore guide clones to COPY_DEST for the next frame's refresh.
     if (depthIn == nr.depthClone)

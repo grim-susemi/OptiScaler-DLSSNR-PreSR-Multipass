@@ -231,7 +231,6 @@ struct DlssNr_Dx12::State
         State& owner;
         explicit DeferredSrContext(State& state) : owner(state) {}
 
-        static constexpr unsigned MarkerCount = 16;
         struct Generation
         {
             ID3D12Device* device = nullptr;
@@ -239,15 +238,11 @@ struct DlssNr_Dx12::State
             unsigned w = 0, h = 0, outW = 0, outH = 0, flags = 0;
             DXGI_FORMAT inputFormat {}, outputFormat {};
             ID3D12Resource *edited = nullptr, *residualInput = nullptr, *residualOutput = nullptr, *clean = nullptr,
-                           *composed = nullptr, *exposure = nullptr, *readback = nullptr;
-            ID3D12QueryHeap* queries = nullptr;
+                           *composed = nullptr, *exposure = nullptr;
             ID3D12Resource* accumulatedEdit[2] {};
             unsigned accumulatedIndex = 0;
             bool accumulationReadable = false, accumulationValid = false;
-            volatile UINT64* completed = nullptr;
-            bool occupied[MarkerCount] {};
-            unsigned nextMarker = 0, lastMarker = 0;
-            bool everRecorded = false, smallReadable = false, reset = true, failed = false;
+            bool smallReadable = false, reset = true, failed = false;
             bool rayReconstruction = false, finishedPicture = false, privateRr = false;
             DlssNr::PrivateUpscaler backend = DlssNr::PrivateUpscaler::DLSS;
             std::unique_ptr<DlssNr::PrivateUpscalerDx12> upscaler;
@@ -256,20 +251,15 @@ struct DlssNr_Dx12::State
             unsigned long long lastBeginEpoch = 0;
             bool began = false;
             std::unique_ptr<DlssNr_Dx12> codec;
-            bool Idle() const { return !everRecorded || completed[lastMarker] != 0; }
             ~Generation()
             {
                 DlssNr_Dx12::Retire(std::move(codec));
                 upscaler.reset(); // Completion protects all four backend histories.
-                if (readback && completed)
-                    readback->Unmap(0, nullptr);
-                for (auto* r : { edited, residualInput, residualOutput, clean, composed, exposure, readback })
+                for (auto* r : { edited, residualInput, residualOutput, clean, composed, exposure })
                     if (r)
                         r->Release();
                 for (auto* r : accumulatedEdit)
                     if (r) r->Release();
-                if (queries)
-                    queries->Release();
                 if (queue)
                     queue->Release();
                 if (device)
@@ -277,37 +267,9 @@ struct DlssNr_Dx12::State
             }
         };
 
-        // Record an actual GPU completion marker after EACH seam. A later CPU frame/Present count alone
-        // does not prove a resource is no longer in flight. Slots aren't reused until the GPU wrote them.
-        struct Use
-        {
-            Generation& g;
-            ID3D12GraphicsCommandList* cmd;
-            unsigned slot;
-            bool valid;
-            Use(Generation& gen, ID3D12GraphicsCommandList* commands) : g(gen), cmd(commands), slot(g.nextMarker)
-            {
-                valid = !g.occupied[slot] || g.completed[slot] != 0;
-                if (!valid)
-                    return;
-                g.completed[slot] = 0;
-                g.occupied[slot] = true;
-                g.lastMarker = slot;
-                g.everRecorded = true;
-                g.nextMarker = (slot + 1) % MarkerCount;
-            }
-            ~Use()
-            {
-                if (!valid)
-                    return;
-                cmd->EndQuery(g.queries, D3D12_QUERY_TYPE_TIMESTAMP, slot);
-                cmd->ResolveQueryData(g.queries, D3D12_QUERY_TYPE_TIMESTAMP, slot, 1, g.readback,
-                                      slot * sizeof(UINT64));
-            }
-        };
-
         std::unique_ptr<Generation> current;
-        std::vector<std::unique_ptr<Generation>> retired;
+        unsigned retiredCount = 0;
+        DlssNr::GpuLifetime lifetime;
         std::string status = "not started";
         struct Pending
         {
@@ -319,7 +281,7 @@ struct DlssNr_Dx12::State
 
         void Say(const std::string& text);
         void Cancel();
-        void Collect();
+        void RetireCurrent();
 
         unsigned UInt(NVSDK_NGX_Parameter* p, const char* key, unsigned fallback = 0);
         float Float(NVSDK_NGX_Parameter* p, const char* key, float fallback);
@@ -335,7 +297,6 @@ struct DlssNr_Dx12::State
     };
     DeferredSrContext deferredSr { *this };
 
-    std::string SynchronousDeferredDlssStatus();
 
     struct LateContext
     {
@@ -442,7 +403,7 @@ struct DlssNr_Dx12::State
     };
     void EncodeInput(EncodeContext& context);
     DlssNrConstants MakeResolveConstants(const EncodeContext& context, unsigned int effectivePasses);
-    void EndGpuTiming(ID3D12GraphicsCommandList* cmdList, ID3D12CommandQueue* timingQueue);
+    void EndGpuTiming(ID3D12GraphicsCommandList* cmdList);
 
     void Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* colour, ID3D12Resource* depth, ID3D12Resource* motion,
              ID3D12Resource* output, const DlssNrFrameInfo& frame, ID3D12CommandQueue* timingQueue);

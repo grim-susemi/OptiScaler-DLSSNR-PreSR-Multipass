@@ -2,6 +2,7 @@
 
 #include "DlssNr_ExposureScan_Internal.h"
 
+#include <DirectXPackedVector.h>
 #include <Config.h>
 #include <Util.h>
 
@@ -18,46 +19,6 @@ namespace Detail
 ScanState g_scan;
 std::mutex g_scanMutex;
 std::mutex g_tickMutex;
-float HalfToFloat(uint16_t h)
-{
-    const uint32_t sign = (uint32_t) (h & 0x8000u) << 16;
-    uint32_t exponent = (h >> 10) & 0x1Fu;
-    uint32_t mantissa = h & 0x3FFu;
-
-    if (exponent == 0)
-    {
-        if (mantissa == 0)
-        {
-            const uint32_t bits = sign;
-            float out;
-            std::memcpy(&out, &bits, sizeof(out));
-            return out;
-        }
-
-        // Subnormal: normalise it by hand.
-        exponent = 1;
-
-        while ((mantissa & 0x400u) == 0)
-        {
-            mantissa <<= 1;
-            --exponent;
-        }
-
-        mantissa &= 0x3FFu;
-    }
-    else if (exponent == 31)
-    {
-        const uint32_t bits = sign | 0x7F800000u | (mantissa << 13);
-        float out;
-        std::memcpy(&out, &bits, sizeof(out));
-        return out;
-    }
-
-    const uint32_t bits = sign | ((exponent + 112) << 23) | (mantissa << 13);
-    float out;
-    std::memcpy(&out, &bits, sizeof(out));
-    return out;
-}
 
 void Barrier(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* res, D3D12_RESOURCE_STATES from,
              D3D12_RESOURCE_STATES to)
@@ -187,7 +148,7 @@ void Tick(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList, uint64_t sub
                 {
                     uint16_t half = 0;
                     std::memcpy(&half, at, sizeof(half));
-                    value = HalfToFloat(half);
+                    value = DirectX::PackedVector::XMConvertHalfToFloat(half);
                 }
                 else
                 {

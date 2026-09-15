@@ -97,14 +97,6 @@ struct DlssNr_Dx12::State
     std::filesystem::path pipelineCaptureDirectory;
     unsigned pipelineCaptureRemaining = 0;
 
-    // One capture happens on its own each session, so there is always a fresh sample without anyone having
-    // to remember to ask. Started after the scene has had a moment to settle: the first frames after a
-    // feature is built carry its reset, and are not representative of anything.
-    static constexpr unsigned long long kAutoCaptureAfterFrames = 180;
-    bool autoCaptureDone = false;
-
-    // Cleared once per run, so a session's captures are its own and nothing accumulates across launches.
-
     unsigned long long frames = 0;
 
     // Logical frame identity for deferred pairing; feature readiness keeps the raw submission counter.
@@ -148,23 +140,9 @@ struct DlssNr_Dx12::State
     // be asked for one from outside the game -- no alt-tab, no menu. Checked once a second, effectively.
     void CheckCaptureTrigger();
 
-    // The encoded mean is aimed here. Mid-grey rather than anything brighter: the model has to see both the
-    // shadow detail it might lift and the highlights it must not blow out.
-    static constexpr float kTargetEncodedMean = 0.45f;
-
-    // How fast the derived value follows the scene. Readings arrive a few times a second, and an exposure
-    // that lunges at every cut is worse than one that arrives a moment late.
-    static constexpr float kWhitePointBlend = 0.25f;
-
-    // Recomputes the white point from a measured mean. Inverting the encode for the white point that puts
-    // that mean at the target gives wp = mean * (1 - t^g) / t^g.
-    float WhitePointForMean(float meanLuma);
-
     DlssNr::GpuLifetime lifetime;
 
     void ParkNrResource(ID3D12Resource*& resource);
-
-    void TickNrRetired([[maybe_unused]] uint64_t epoch);
 
     // The inject point decides which buffer is being measured -- the upscaler's linear output or the
     // finished frame in swapchain format -- so a reading taken before a change describes a different
@@ -182,7 +160,8 @@ struct DlssNr_Dx12::State
     // Same shape as the meter's copy, against the calibration surface and its own ring.
     void CopyCalibrationToReadback(ID3D12GraphicsCommandList* cmdList);
 
-    void CopyMeterToReadback(ID3D12GraphicsCommandList* cmdList, ID3D12Device* device, bool exposureBound);
+    void CopyMeterToReadback(ID3D12GraphicsCommandList* cmdList);
+    void CopyGridToReadback(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* grid, ID3D12Resource* readback);
 
     // Consume texel zero from the delayed readback ring, retaining the last plausible exposure.
     void ConsumeCalibrationReadback();
@@ -501,6 +480,7 @@ struct DlssNr_Dx12::State
         unsigned int guideH;
         unsigned int frameW;
         unsigned int frameH;
+        bool operator==(const GuideReport&) const = default;
     };
     GuideReport loggedGuides {};
     struct ComposeReport
@@ -517,18 +497,10 @@ struct DlssNr_Dx12::State
         unsigned int workW;
         unsigned int workH;
         unsigned int passes;
+        bool operator==(const ComposeReport&) const = default;
     };
     ComposeReport loggedCompose {};
 
-    struct ExposureReport
-    {
-        bool valid;
-        float pre;
-        bool havePre;
-        bool haveTexture;
-        bool autoFlag;
-    };
-    ExposureReport logged {};
     std::set<std::string> seen;
     unsigned long long resets = 0;
     bool reportedHdr = false;
@@ -540,11 +512,6 @@ struct DlssNr_Dx12::State
     unsigned int lastSuper = 0;
     unsigned long long lastSplitLog = 0;
     unsigned lastFinishedMode = 0;
-    bool reportedPadding = false;
-    bool warnedSubrect = false;
-    ApiUpscalerInput saidApi = (ApiUpscalerInput) -1;
-    float loggedExposure = -1.0f;
-    float loggedScan = -1.0f;
 
     bool modelRunning = false;
     ID3D12Resource* buffer = nullptr;

@@ -9,9 +9,6 @@ auto DlssNr_Dx12::State::ParkNrResource(ID3D12Resource*& resource) -> void
     lifetime.Retire([retired] { retired->Release(); });
 }
 
-auto DlssNr_Dx12::State::TickNrRetired([[maybe_unused]] uint64_t epoch) -> void
-{ lifetime.Collect(); }
-
 auto DlssNr_Dx12::State::ReleaseSurfacesIfFormatChanged(DXGI_FORMAT needed) -> void
 {
     if (nr.output == nullptr || nr.output->GetDesc().Format == needed)
@@ -173,38 +170,19 @@ auto DlssNr_Dx12::State::FormatCanHoldLinearHdr(DXGI_FORMAT format) -> bool
 
 auto DlssNr_Dx12::State::GetResource(NVSDK_NGX_Parameter* params, const char* a, const char* b) -> ID3D12Resource*
 {
-    ID3D12Resource* res = nullptr;
-
-    if (params->Get(a, &res) == NVSDK_NGX_Result_Success && res != nullptr)
-        return res;
-
-    res = nullptr;
-
-    if (params->Get(b, &res) == NVSDK_NGX_Result_Success && res != nullptr)
-        return res;
-
-    // The same key again, as a plain pointer.
-    //
-    // NVSDK_NGX_Parameter has a typed setter per resource kind and an untyped one, and on a real NGX
-    // parameter block those are separate slots: what goes in through Set(name, void*) does not come
-    // back out of Get(name, ID3D12Resource**). A game running its own D3D12 upscaler sets these
-    // typed, so the typed read above is enough and always was.
-    //
-    // Both of OptiScaler's bridges write them untyped. IFeature_Dx11wDx12 and IFeature_VkwDx12 turn
-    // the game's D3D11 textures or Vulkan images into D3D12 resources and hand them over with
-    // Set(name, (void*) resource) -- so the typed read came back null a few lines after the resource
-    // had been written, and the pass quietly did nothing. That is the whole reason this never ran in
-    // a DirectX 11 or Vulkan game.
-    void* untyped = nullptr;
-
-    if (params->Get(a, &untyped) == NVSDK_NGX_Result_Success && untyped != nullptr)
-        return static_cast<ID3D12Resource*>(untyped);
-
-    untyped = nullptr;
-
-    if (params->Get(b, &untyped) == NVSDK_NGX_Result_Success && untyped != nullptr)
-        return static_cast<ID3D12Resource*>(untyped);
-
+    // Preserve typed-key precedence; DX11/Vulkan bridges can supply untyped resources.
+    for (const char* name : { a, b })
+    {
+        ID3D12Resource* resource = nullptr;
+        if (params->Get(name, &resource) == NVSDK_NGX_Result_Success && resource)
+            return resource;
+    }
+    for (const char* name : { a, b })
+    {
+        void* resource = nullptr;
+        if (params->Get(name, &resource) == NVSDK_NGX_Result_Success && resource)
+            return static_cast<ID3D12Resource*>(resource);
+    }
     return nullptr;
 }
 
@@ -222,34 +200,19 @@ auto DlssNr_Dx12::State::ReleaseResources() -> void
     std::fill(std::begin(nr.passCreateFailed), std::end(nr.passCreateFailed), false);
     modelRunning = false;
 
-    if (nr.output != nullptr)
-    {
-        ParkNrResource(nr.output);
-    }
+    ParkNrResource(nr.output);
 
     ParkNrResource(nr.passScratch);
     ParkNrResource(nr.passClamp);
     nr.passScratchFailed = false;
 
-    if (nr.colorCopy != nullptr)
-    {
-        ParkNrResource(nr.colorCopy);
-    }
+    ParkNrResource(nr.colorCopy);
 
-    if (nr.hdrCopy != nullptr)
-    {
-        ParkNrResource(nr.hdrCopy);
-    }
+    ParkNrResource(nr.hdrCopy);
 
-    if (nr.activeColor != nullptr)
-    {
-        ParkNrResource(nr.activeColor);
-    }
+    ParkNrResource(nr.activeColor);
 
-    if (nr.colorSmall != nullptr)
-    {
-        ParkNrResource(nr.colorSmall);
-    }
+    ParkNrResource(nr.colorSmall);
 
     if (nr.superUp != nullptr)
     {
@@ -263,49 +226,23 @@ auto DlssNr_Dx12::State::ReleaseResources() -> void
         nr.superDown = nullptr;
     }
 
-    if (nr.outputNative != nullptr)
-    {
-        ParkNrResource(nr.outputNative);
-    }
+    ParkNrResource(nr.outputNative);
 
-    if (nr.heldColor != nullptr)
-    {
-        ParkNrResource(nr.heldColor);
-    }
+    ParkNrResource(nr.heldColor);
     nr.heldActive = false;
 
-    if (nr.meter != nullptr)
-    {
-        ParkNrResource(nr.meter);
-    }
+    ParkNrResource(nr.meter);
 
-    if (nr.calib != nullptr)
-    {
-        ParkNrResource(nr.calib);
-    }
+    ParkNrResource(nr.calib);
 
     for (auto& r : nr.calibReadback)
-    {
-        if (r != nullptr)
-        {
-            ParkNrResource(r);
-        }
-    }
+        ParkNrResource(r);
 
     nr.calibFrames = 0;
-    nr.calibCount = 0;
-    nr.calibSuggestion = 0.0f;
-    nr.calibSteadiness = 0.0f;
-    nr.calibUsable = false;
-    nr.calibWhy = "measuring...";
+    ForgetCalibration();
 
     for (auto& rb : nr.meterReadback)
-    {
-        if (rb != nullptr)
-        {
-            ParkNrResource(rb);
-        }
-    }
+        ParkNrResource(rb);
 
     // The slots these flags describe have just been released, so nothing may vouch for what the next
     // buffers happen to contain. gameExposure is deliberately NOT cleared here: a recreate is a
@@ -317,15 +254,9 @@ auto DlssNr_Dx12::State::ReleaseResources() -> void
 
     nr.meterFrames = 0;
 
-    if (nr.depthClone != nullptr)
-    {
-        ParkNrResource(nr.depthClone);
-    }
+    ParkNrResource(nr.depthClone);
 
-    if (nr.motionClone != nullptr)
-    {
-        ParkNrResource(nr.motionClone);
-    }
+    ParkNrResource(nr.motionClone);
 
     captureFrames.release();
     if (auto* timer = gpuTime.release()) lifetime.Retire([timer] { delete timer; });

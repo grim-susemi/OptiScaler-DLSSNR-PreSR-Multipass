@@ -116,10 +116,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         width, (unsigned int) height
     };
 
-    if (!loggedGuides.valid || loggedGuides.depthInverted != guidesNow.depthInverted ||
-        loggedGuides.mvScaleX != guidesNow.mvScaleX || loggedGuides.mvScaleY != guidesNow.mvScaleY ||
-        loggedGuides.guideW != guidesNow.guideW || loggedGuides.guideH != guidesNow.guideH ||
-        loggedGuides.frameW != guidesNow.frameW || loggedGuides.frameH != guidesNow.frameH)
+    if (loggedGuides != guidesNow)
     {
         loggedGuides = guidesNow;
         LOG_INFO("DLSS-NR guides: depth {}, motion vector scale {} x {}, guides {}x{} for a {}x{} frame",
@@ -182,7 +179,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
 
     // Advance capture scheduling only once the codec and models are ready.
     ++frames;
-    TickNrRetired(frame.SubmissionEpoch);
+    lifetime.Collect();
     CheckCaptureTrigger();
 
     if (captureWriteAtFrame != 0 && frames >= captureWriteAtFrame)

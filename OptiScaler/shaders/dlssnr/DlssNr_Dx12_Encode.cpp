@@ -65,7 +65,7 @@ void DlssNr_Dx12::State::EncodeInput(EncodeContext& context)
                             nullptr, nr.meter, nullptr);
         TransitionTarget(priorTargetState);
 
-        CopyMeterToReadback(cmdList, device, true);
+        CopyMeterToReadback(cmdList);
         ConsumeMeterReadback();
     }
 
@@ -321,13 +321,7 @@ DlssNrConstants DlssNr_Dx12::State::MakeResolveConstants(const EncodeContext& co
                                      nr.workHeight,
                                      effectivePasses };
 
-    if (!loggedCompose.valid || loggedCompose.whitePoint != composeNow.whitePoint ||
-        loggedCompose.transfer != composeNow.transfer || loggedCompose.colour != composeNow.colour ||
-        loggedCompose.maxRatio != composeNow.maxRatio || loggedCompose.passthrough != composeNow.passthrough ||
-        loggedCompose.debugView != composeNow.debugView ||
-        loggedCompose.compareMode != composeNow.compareMode || loggedCompose.residual != composeNow.residual ||
-        loggedCompose.workW != composeNow.workW || loggedCompose.workH != composeNow.workH ||
-        loggedCompose.passes != composeNow.passes)
+    if (loggedCompose != composeNow)
     {
         loggedCompose = composeNow;
         LOG_INFO("DLSS-NR composition: paper white {:.2f}x, detail {:.2f}, colour {:.2f}, guard "

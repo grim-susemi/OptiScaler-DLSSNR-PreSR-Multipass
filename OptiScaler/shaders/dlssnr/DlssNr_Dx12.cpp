@@ -1,53 +1,10 @@
 #include "pch.h"
-#include <dlssnr/PassProfiles.h>
-
-#include <set>
-#include <list>
-#include <wrl/client.h>
-#include <resource_tracking/ResTrack_Dx12.h>
-#include <dlssnr/DlssNr_FinishedPictureBridge_Dx11.h>
-#include <dlssnr/DlssNr_HoldParameters_Dx12.h>
-#include <upscalers/ShaderPipeline_Dx12.h>
-
-#include <dlssnr/DlssNr.h>
-
-#include <dlssnr/DlssNr_Capture.h>
-#include <dlssnr/DlssNr_Proxy.h>
-#include <dlssnr/DlssNr_GpuLifetime.h>
-#include <dlssnr/DlssNr_ExposureScan.h>
-
 #include "DlssNr_Dx12_State.h"
-#include "DlssNr_ActiveColor.h"
-#include "DlssNr_Upscaler_Dx12.h"
-#include <dlssnr/DlssNr_Pipeline_Dx12.h>
-#include "DlssNr_Guides.h"
-#include "DlssNr_SeamClock.h"
-
-#include <Config.h>
-#include <State.h>
-#include <Util.h>
-
-#include <proxies/NVNGX_Proxy.h>
-#include <hooks/D3D12_Hooks.h>
-#include <gpu_time/GpuTime_Dx12.h>
-#include "DlssNr_GpuTime.h"
-
-#include <mutex>
 #include <atomic>
-#include <algorithm>
-#include <cstring>
+#include <list>
 #include "precompile/DlssNr_Shader.h"
 #include "precompile/dlssnr_residual_Shader.h"
 #include "precompile/dlssnr_finished_color_Shader.h"
-#include "DlssNr_ResidualPair.h"
-#include "../output_scaling/OS_Dx12.h"
-
-using DlssNr::Profiles::NrPassTuning;
-using DlssNr::Profiles::PassPreset;
-using DlssNr::Profiles::PassStyle;
-using DlssNr::Profiles::PassTuning;
-
-using DlssNr::CalibrationReading;
 
 namespace
 {
@@ -177,8 +134,18 @@ bool DlssNr_Dx12::DispatchPass(ID3D12GraphicsCommandList* InCmdList, const DlssN
 {
     std::lock_guard ownersLock(nrOwnersMutex);
     std::lock_guard stateLock(_state->mutex);
+    return DispatchCompute(InCmdList, InConstants, _pipelineState, InSource, InModel, InOriginal,
+                           InMotion, InPrevEdit, OutTarget, OutKeep, immutableSlot);
+}
+
+bool DlssNr_Dx12::DispatchCompute(ID3D12GraphicsCommandList* InCmdList, const DlssNrConstants& InConstants,
+                                 ID3D12PipelineState* pipeline, ID3D12Resource* InSource,
+                                 ID3D12Resource* InModel, ID3D12Resource* InOriginal,
+                                 ID3D12Resource* InMotion, ID3D12Resource* InPrevEdit,
+                                 ID3D12Resource* OutTarget, ID3D12Resource* OutKeep, uint32_t* immutableSlot)
+{
     _state->lifetime.Record(InCmdList);
-    if (!_init || InCmdList == nullptr || _device == nullptr || InSource == nullptr || OutTarget == nullptr)
+    if (!_init || !pipeline || !InCmdList || !_device || !InSource || !OutTarget)
         return false;
 
     const bool reuse = immutableSlot && *immutableSlot != UINT32_MAX;
@@ -225,7 +192,7 @@ bool DlssNr_Dx12::DispatchPass(ID3D12GraphicsCommandList* InCmdList, const DlssN
     ID3D12DescriptorHeap* heaps[] = { currentHeap.GetHeapCSU() };
     InCmdList->SetDescriptorHeaps(_countof(heaps), heaps);
     InCmdList->SetComputeRootSignature(_rootSignature);
-    InCmdList->SetPipelineState(_pipelineState);
+    InCmdList->SetPipelineState(pipeline);
     InCmdList->SetComputeRootDescriptorTable(0, currentHeap.GetTableGPUStart());
 
     // Sized from the constants rather than from a resource, because the pass that shrinks the proxy
@@ -246,10 +213,6 @@ void DlssNr_Dx12::Retire(std::unique_ptr<DlssNr_Dx12> owner)
     {
         std::lock_guard stateLock(owner->_state->mutex);
         owner->_state->late.Cancel();
-        // These lists belong to NR and cannot be replayed after retirement. Closing
-        // their logical recordings retains every submitted fence, without resetting GPU allocators.
-        for (auto& slot : owner->_state->late.slots)
-            if (slot.commands) owner->_state->FinishedPictureResetCommandList(slot.commands.Get());
     }
     RetiredNrOwners().push_back(std::move(owner));
     LOG_INFO("DLSS-NR: retaining retired GPU owner until recordings finish; {} waiting", RetiredNrOwners().size());
@@ -319,55 +282,12 @@ bool DlssNr_Dx12::DispatchResidualPass(ID3D12GraphicsCommandList* InCmdList, con
 {
     std::lock_guard ownersLock(nrOwnersMutex);
     std::lock_guard stateLock(_state->mutex);
-    _state->lifetime.Record(InCmdList);
     if (finishedColor && !_finishedColorPipelineState && _init)
         CreateComputePipeline(_device, &_finishedColorPipelineState, dlssnr_finished_color_cso,
                               sizeof(dlssnr_finished_color_cso), nullptr);
     auto* pipeline = finishedColor ? _finishedColorPipelineState : _residualPipelineState;
-    if (!_init || pipeline == nullptr || InCmdList == nullptr || _device == nullptr || InSource == nullptr ||
-        OutTarget == nullptr)
-        return false;
-
-    const uint32_t slot = _heapIndex;
-    _heapIndex = (_heapIndex + 1) % DLSSNR_NUM_OF_HEAPS;
-
-    FrameDescriptorHeap& currentHeap = _frameHeaps[slot];
-
-    // Same table shape as DispatchPass: the residual shader reads t0..t3 + u0, and t4/u1 get the
-    // source as a stand-in so no descriptor in the table is left unbound.
-    ID3D12Resource* const srvs[kSrvCount] = {
-        InSource,
-        InModel != nullptr ? InModel : InSource,
-        InOriginal != nullptr ? InOriginal : InSource,
-        InMotion != nullptr ? InMotion : InSource,
-        InSource,
-    };
-
-    for (uint32_t i = 0; i < kSrvCount; ++i)
-        CreateShaderResourceView(_device, srvs[i], currentHeap.GetSrvCPU(i));
-
-    ID3D12Resource* const uavs[kUavCount] = { OutTarget, OutTarget };
-
-    for (uint32_t i = 0; i < kUavCount; ++i)
-        CreateUnorderedAccessView(_device, uavs[i], currentHeap.GetUavCPU(i), 0);
-
-    if (!CreateConstantsBuffer(_device, _constantBuffers[slot], InConstants, currentHeap.GetCbvCPU(0)))
-    {
-        LOG_ERROR("[{0}] Failed to create a constants buffer", _name);
-        return false;
-    }
-
-    ID3D12DescriptorHeap* heaps[] = { currentHeap.GetHeapCSU() };
-    InCmdList->SetDescriptorHeaps(_countof(heaps), heaps);
-    InCmdList->SetComputeRootSignature(_rootSignature);
-    InCmdList->SetPipelineState(pipeline);
-    InCmdList->SetComputeRootDescriptorTable(0, currentHeap.GetTableGPUStart());
-
-    const UINT dispatchWidth = (InConstants.Width + _numThreadsX - 1) / _numThreadsX;
-    const UINT dispatchHeight = (InConstants.Height + _numThreadsY - 1) / _numThreadsY;
-    InCmdList->Dispatch(dispatchWidth, dispatchHeight, 1);
-
-    return true;
+    return DispatchCompute(InCmdList, InConstants, pipeline, InSource, InModel, InOriginal,
+                           InMotion, nullptr, OutTarget, nullptr, nullptr);
 }
 
 bool DlssNr_Dx12::CreateBufferResource(ID3D12Device* device, ID3D12Resource* source, D3D12_RESOURCE_STATES state)

@@ -330,7 +330,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
         ((owner.featureFlags ? owner.featureFlags
                              : UInt(source, NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags)) &
          NVSDK_NGX_DLSS_Feature_Flags_IsHDR) != 0 &&
-        owner.FormatCanHoldLinearHdr(outDesc.Format);
+        DlssNr::FormatCanHoldLinearHdr(outDesc.Format);
     frame.Reset = UInt(source, NVSDK_NGX_Parameter_Reset) != 0 || g.reset;
     frame.MvScaleX = Float(source, NVSDK_NGX_Parameter_MV_Scale_X, 1);
     frame.MvScaleY = Float(source, NVSDK_NGX_Parameter_MV_Scale_Y, 1);
@@ -554,7 +554,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::After(ID3D12GraphicsCommandList* cmd
             ((owner.featureFlags ? owner.featureFlags
                                  : UInt(source, NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags)) &
              NVSDK_NGX_DLSS_Feature_Flags_IsHDR) != 0 &&
-            owner.FormatCanHoldLinearHdr(g.outputFormat);
+            DlssNr::FormatCanHoldLinearHdr(g.outputFormat);
         if (owner.late.CaptureResidual(cmd, pair.output, g.residualOutput, pair.scale, sceneLinear,
                                        UInt(source, NVSDK_NGX_Parameter_Reset) != 0))
             Say(std::string("running: model -> private ") + g.upscaler->Name() + "; changes saved for the finished picture");

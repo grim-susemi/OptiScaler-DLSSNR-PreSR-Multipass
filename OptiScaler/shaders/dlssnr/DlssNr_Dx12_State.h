@@ -42,10 +42,7 @@
 #include "../output_scaling/OS_Dx12.h"
 
 
-using DlssNr::Profiles::NrPassTuning;
-using DlssNr::Profiles::PassPreset;
-using DlssNr::Profiles::PassStyle;
-using DlssNr::Profiles::PassTuning;
+using DlssNr::Profiles::PassSettings;
 
 using DlssNr::CalibrationReading;
 
@@ -195,7 +192,6 @@ struct DlssNr_Dx12::State
                                   ID3D12Resource** clone);
 
     // Try both SR and ray-reconstruction parameter names; absent values return null.
-    bool FormatCanHoldLinearHdr(DXGI_FORMAT format);
 
     ID3D12Resource* GetResource(NVSDK_NGX_Parameter* params, const char* a, const char* b);
 
@@ -426,7 +422,6 @@ struct DlssNr_Dx12::State
     bool ApplyFinishedColor(ID3D12Resource* color, ID3D12CommandQueue* queue, DXGI_COLOR_SPACE_TYPE colorSpace,
                             bool gameFrameHandoff = false);
 
-    DlssNr::Proxy::Settings ModelSettings(const Config& cfg, unsigned int pass);
     bool PrepareRunModels(ID3D12GraphicsCommandList* cmdList, ID3D12Device* device,
                           const DlssNrFrameInfo& frame, const D3D12_RESOURCE_DESC& desc,
                           DlssNr::ColorExtent native, DlssNr::ColorExtent work,

@@ -1,20 +1,11 @@
 #pragma once
 #include <Config.h>
+#include "DlssNr_ModelParameters.h"
 #include <algorithm>
 #include <cmath>
 
 namespace DlssNr::Profiles
 {
-struct NrPassTuning
-{
-    float intensity = 1.0f;
-    float structure = 1.0f;
-    float tone = 0.0f;
-    float skin = -1.0f;
-    bool autoMask = true;
-    bool operator==(const NrPassTuning&) const = default;
-};
-
 inline unsigned int PassPreset(const Config& cfg, unsigned int pass)
 {
     const unsigned int base = std::min(cfg.DlssNrPreset.value_or_default(), 3u);
@@ -44,55 +35,45 @@ inline unsigned int PassStyle(const Config& cfg, unsigned int pass)
     return base;
 }
 
-inline NrPassTuning PassTuning(const Config& cfg, unsigned int pass)
+inline ModelSettings PassSettings(const Config& cfg, unsigned int pass)
 {
-    NrPassTuning result { cfg.DlssNrIntensity.value_or_default(),
+    ModelSettings result { PassPreset(cfg, pass), PassStyle(cfg, pass), cfg.DlssNrIntensity.value_or_default(),
                           cfg.DlssNrLocalStructure.value_or_default(),
                           pass == 0 ? cfg.DlssNrLocalTone.value_or_default() : 0.0f,
                           cfg.DlssNrSkinStructure.value_or_default(),
                           cfg.DlssNrAutoMask.value_or_default() };
     if (pass == 1)
     {
-        if (cfg.DlssNrPass2Intensity.has_value())
-            result.intensity = cfg.DlssNrPass2Intensity.value();
-        if (cfg.DlssNrPass2LocalStructure.has_value())
-            result.structure = cfg.DlssNrPass2LocalStructure.value();
-        if (cfg.DlssNrPass2LocalTone.has_value())
-            result.tone = cfg.DlssNrPass2LocalTone.value();
-        if (cfg.DlssNrPass2SkinStructure.has_value())
-            result.skin = cfg.DlssNrPass2SkinStructure.value();
-        if (cfg.DlssNrPass2AutoMask.has_value())
-            result.autoMask = cfg.DlssNrPass2AutoMask.value();
+        result.intensity = cfg.DlssNrPass2Intensity.value_or(result.intensity);
+        result.localStructure = cfg.DlssNrPass2LocalStructure.value_or(result.localStructure);
+        result.localTone = cfg.DlssNrPass2LocalTone.value_or(result.localTone);
+        result.skinStructure = cfg.DlssNrPass2SkinStructure.value_or(result.skinStructure);
+        result.autoMask = cfg.DlssNrPass2AutoMask.value_or(result.autoMask);
     }
     if (pass == 2)
     {
-        if (cfg.DlssNrPass3Intensity.has_value())
-            result.intensity = cfg.DlssNrPass3Intensity.value();
-        if (cfg.DlssNrPass3LocalStructure.has_value())
-            result.structure = cfg.DlssNrPass3LocalStructure.value();
-        if (cfg.DlssNrPass3LocalTone.has_value())
-            result.tone = cfg.DlssNrPass3LocalTone.value();
-        if (cfg.DlssNrPass3SkinStructure.has_value())
-            result.skin = cfg.DlssNrPass3SkinStructure.value();
-        if (cfg.DlssNrPass3AutoMask.has_value())
-            result.autoMask = cfg.DlssNrPass3AutoMask.value();
+        result.intensity = cfg.DlssNrPass3Intensity.value_or(result.intensity);
+        result.localStructure = cfg.DlssNrPass3LocalStructure.value_or(result.localStructure);
+        result.localTone = cfg.DlssNrPass3LocalTone.value_or(result.localTone);
+        result.skinStructure = cfg.DlssNrPass3SkinStructure.value_or(result.skinStructure);
+        result.autoMask = cfg.DlssNrPass3AutoMask.value_or(result.autoMask);
     }
     if (pass >= 3 && pass < 30)
     {
         const auto& extra = cfg.DlssNrExtraPasses[pass - 3];
-        if (extra.intensity.has_value()) result.intensity = extra.intensity.value();
-        if (extra.structure.has_value()) result.structure = extra.structure.value();
-        if (extra.tone.has_value()) result.tone = extra.tone.value();
-        if (extra.skin.has_value()) result.skin = extra.skin.value();
-        if (extra.autoMask.has_value()) result.autoMask = extra.autoMask.value();
+        result.intensity = extra.intensity.value_or(result.intensity);
+        result.localStructure = extra.structure.value_or(result.localStructure);
+        result.localTone = extra.tone.value_or(result.localTone);
+        result.skinStructure = extra.skin.value_or(result.skinStructure);
+        result.autoMask = extra.autoMask.value_or(result.autoMask);
     }
     const auto bounded = [](float value, float fallback, float minimum) {
         return std::isfinite(value) ? std::clamp(value, minimum, 2.0f) : fallback;
     };
     result.intensity = bounded(result.intensity, 1.0f, 0.0f);
-    result.structure = bounded(result.structure, 1.0f, 0.0f);
-    result.tone = bounded(result.tone, pass == 0 ? 1.0f : 0.0f, 0.0f);
-    result.skin = bounded(result.skin, -1.0f, -1.0f);
+    result.localStructure = bounded(result.localStructure, 1.0f, 0.0f);
+    result.localTone = bounded(result.localTone, pass == 0 ? 1.0f : 0.0f, 0.0f);
+    result.skinStructure = bounded(result.skinStructure, -1.0f, -1.0f);
     return result;
 }
 }

@@ -112,21 +112,8 @@ struct ModelStateDx12
     bool rayReconstruction = false;
     bool reset = true;
 
-    // Dimensions of the guides as the upscaler handed them over, kept for the present path, which runs
-    // long after that call has returned.
-    unsigned int guideWidth = 0;
-    unsigned int guideHeight = 0;
-
-    // How the game encodes its guides, as the game itself reports it. Captured with the guides, since
-    // the finished-frame path runs long after the upscaler's call has returned.
-    bool guideDepthInverted = false;
-    float guideMvScaleX = 1.0f;
-    float guideMvScaleY = 1.0f;
-
     // The preset, style and strengths each live feature was created with.
-    unsigned int builtPreset[DlssNr::MaxPassCount] = {};
-    Profiles::NrPassTuning builtPassTuning[DlssNr::MaxPassCount] {};
-    unsigned int builtStyle[DlssNr::MaxPassCount] = {};
+    ModelSettings builtSettings[DlssNr::MaxPassCount] {};
 
     // Latch failures until an explicit retry rather than recording failing GPU work every frame.
     bool failed = false;

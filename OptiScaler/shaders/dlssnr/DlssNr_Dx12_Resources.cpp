@@ -152,22 +152,6 @@ auto DlssNr_Dx12::State::ReadableGuide(ID3D12Device* device, ID3D12GraphicsComma
     return *clone;
 }
 
-auto DlssNr_Dx12::State::FormatCanHoldLinearHdr(DXGI_FORMAT format) -> bool
-{
-    switch (format)
-    {
-    case DXGI_FORMAT_R16G16B16A16_FLOAT:
-    case DXGI_FORMAT_R16G16B16A16_TYPELESS:
-    case DXGI_FORMAT_R32G32B32A32_FLOAT:
-    case DXGI_FORMAT_R32G32B32A32_TYPELESS:
-    case DXGI_FORMAT_R32G32B32_FLOAT:
-    case DXGI_FORMAT_R11G11B10_FLOAT:
-        return true;
-    default:
-        return false;
-    }
-}
-
 auto DlssNr_Dx12::State::GetResource(NVSDK_NGX_Parameter* params, const char* a, const char* b) -> ID3D12Resource*
 {
     // Preserve typed-key precedence; DX11/Vulkan bridges can supply untyped resources.

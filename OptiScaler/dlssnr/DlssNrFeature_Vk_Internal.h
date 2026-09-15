@@ -46,9 +46,7 @@ struct VkState
 
     bool ngxInitialised = false;
     NgxPassVk models[DlssNr::MaxPassCount] {};
-    Profiles::NrPassTuning builtTuning[DlssNr::MaxPassCount] {};
-    unsigned int builtPreset[DlssNr::MaxPassCount] {};
-    unsigned int builtStyle[DlssNr::MaxPassCount] {};
+    ModelSettings builtSettings[DlssNr::MaxPassCount] {};
     unsigned int activePasses = 0;
     VkEvent creationReady = VK_NULL_HANDLE;
     bool creationPending = false;
@@ -157,8 +155,6 @@ struct ModelVk::Impl
                            VkImageLayout to);
     bool InitDriver(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device);
     void ReleaseModels();
-    static void SetTuning(NVSDK_NGX_Parameter* parameters, const Profiles::NrPassTuning& tuning,
-                          unsigned int style);
     bool CreateModel(VkCommandBuffer commandBuffer, unsigned int passIndex, unsigned int width,
                      unsigned int height, const Config& config);
     NVSDK_NGX_Result EvaluateModel(VkCommandBuffer commandBuffer, unsigned int passIndex,

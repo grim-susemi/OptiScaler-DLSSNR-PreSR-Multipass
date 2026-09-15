@@ -68,18 +68,6 @@ void ModelVk::Impl::ReleaseModels()
     }
 }
 
-void ModelVk::Impl::SetTuning(NVSDK_NGX_Parameter* parameters, const Profiles::NrPassTuning& tuning,
-                      unsigned int style)
-{
-    parameters->Set("DLSSNR.Intensity", tuning.intensity);
-    parameters->Set("DLSSNR.Style", style);
-    parameters->Set("DLSSNR.LocalStructureStrength", tuning.structure);
-    parameters->Set("DLSSNR.LocalToneStrength", tuning.tone);
-    parameters->Set("DLSSNR.SkinStructureStrength", tuning.skin);
-    parameters->Set("DLSSNR.ControlMask", static_cast<void*>(nullptr));
-    parameters->Set("DLSSNR.UseAutoMask", tuning.autoMask ? 1u : 0u);
-}
-
 bool ModelVk::Impl::CreateModel(VkCommandBuffer commandBuffer, unsigned int passIndex, unsigned int width,
                  unsigned int height, const Config& config)
 {
@@ -105,7 +93,8 @@ bool ModelVk::Impl::CreateModel(VkCommandBuffer commandBuffer, unsigned int pass
     parameters->Set("VisibilityNodeMask", 1u);
     parameters->Set("DLSSNR.Hint.Render.Preset", Profiles::PassPreset(config, passIndex));
     parameters->Set("DLSSNR.UICorrection", 1u);
-    SetTuning(parameters, Profiles::PassTuning(config, passIndex), Profiles::PassStyle(config, passIndex));
+    SetModelTuning(parameters, Profiles::PassSettings(config, passIndex));
+    parameters->Set("DLSSNR.ControlMask", static_cast<void*>(nullptr));
     const auto result = NVNGXProxy::VULKAN_CreateFeature1()(
         state.device, commandBuffer, static_cast<NVSDK_NGX_Feature>(18), parameters, &model.feature);
     // Identical-profile layers still require distinct temporal histories. Reject aliasing rather
@@ -152,25 +141,11 @@ NVSDK_NGX_Result ModelVk::Impl::EvaluateModel(VkCommandBuffer commandBuffer, uns
     parameters->Set("DLSSNR.Height", height);
     parameters->Set("DLSSNR.DepthInverted", depthInverted ? 1u : 0u);
     parameters->Set("DLSSNR.Reset", state.reset ? 1u : 0u);
-    parameters->Set("DLSSNR.ColorSubrectBaseX", 0u);
-    parameters->Set("DLSSNR.ColorSubrectBaseY", 0u);
-    parameters->Set("DLSSNR.ColorSubrectWidth", width);
-    parameters->Set("DLSSNR.ColorSubrectHeight", height);
-    parameters->Set("DLSSNR.OutputSubrectBaseX", 0u);
-    parameters->Set("DLSSNR.OutputSubrectBaseY", 0u);
-    parameters->Set("DLSSNR.OutputSubrectWidth", width);
-    parameters->Set("DLSSNR.OutputSubrectHeight", height);
-    parameters->Set("DLSSNR.DepthSubrectBaseX", guides.depth.x);
-    parameters->Set("DLSSNR.DepthSubrectBaseY", guides.depth.y);
-    parameters->Set("DLSSNR.DepthSubrectWidth", guides.depth.width);
-    parameters->Set("DLSSNR.DepthSubrectHeight", guides.depth.height);
-    parameters->Set("DLSSNR.MVecSubrectBaseX", guides.motion.x);
-    parameters->Set("DLSSNR.MVecSubrectBaseY", guides.motion.y);
-    parameters->Set("DLSSNR.MVecSubrectWidth", guides.motion.width);
-    parameters->Set("DLSSNR.MVecSubrectHeight", guides.motion.height);
+    SetModelRegions(parameters, { width, height }, guides);
     parameters->Set("DLSSNR.MVecScaleX", mvX);
     parameters->Set("DLSSNR.MVecScaleY", mvY);
-    SetTuning(parameters, Profiles::PassTuning(config, passIndex), Profiles::PassStyle(config, passIndex));
+    SetModelTuning(parameters, Profiles::PassSettings(config, passIndex));
+    parameters->Set("DLSSNR.ControlMask", static_cast<void*>(nullptr));
     return NVNGXProxy::VULKAN_EvaluateFeature()(commandBuffer, model.feature, parameters, nullptr);
 }
 
@@ -288,9 +263,7 @@ bool ModelVk::Impl::PrepareModels(VkCommandBuffer cmdBuffer, const DlssNrFrameIn
     // size changes -- moving the slider is a rebuild, which is why it is compared here.
     bool profileChanged = state.activePasses != passes;
     for (unsigned int pass = 0; pass < passes; ++pass)
-        profileChanged |= state.builtTuning[pass] != Profiles::PassTuning(cfg, pass) ||
-                          state.builtPreset[pass] != Profiles::PassPreset(cfg, pass) ||
-                          state.builtStyle[pass] != Profiles::PassStyle(cfg, pass);
+        profileChanged |= state.builtSettings[pass] != Profiles::PassSettings(cfg, pass);
     if (state.width != width || state.height != height || state.workWidth != workWidth ||
         state.workHeight != workHeight || state.beforeSr != beforeSr ||
         state.rayReconstruction != rayReconstruction || profileChanged)
@@ -351,11 +324,7 @@ bool ModelVk::Impl::PrepareModels(VkCommandBuffer cmdBuffer, const DlssNrFrameIn
         state.rayReconstruction = rayReconstruction;
         state.activePasses = passes;
         for (unsigned int pass = 0; pass < passes; ++pass)
-        {
-            state.builtTuning[pass] = Profiles::PassTuning(cfg, pass);
-            state.builtPreset[pass] = Profiles::PassPreset(cfg, pass);
-            state.builtStyle[pass] = Profiles::PassStyle(cfg, pass);
-        }
+            state.builtSettings[pass] = Profiles::PassSettings(cfg, pass);
         state.reset = true;
     }
 

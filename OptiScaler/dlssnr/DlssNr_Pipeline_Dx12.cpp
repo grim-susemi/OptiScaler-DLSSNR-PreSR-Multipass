@@ -103,20 +103,7 @@ ShaderPass_Dx12 MakeDlssNrPass(DlssNr_Dx12& shader, ID3D12Device* device, ID3D12
     auto* finalOutput = NrResource(parameters, NVSDK_NGX_Parameter_Output, "DLSSD.Output");
     auto* colourAuthority = finalOutput != nullptr ? finalOutput : color;
     if (colourAuthority != nullptr)
-    {
-        switch (colourAuthority->GetDesc().Format)
-        {
-        case DXGI_FORMAT_R16G16B16A16_FLOAT:
-        case DXGI_FORMAT_R16G16B16A16_TYPELESS:
-        case DXGI_FORMAT_R32G32B32A32_FLOAT:
-        case DXGI_FORMAT_R32G32B32A32_TYPELESS:
-        case DXGI_FORMAT_R32G32B32_FLOAT:
-        case DXGI_FORMAT_R11G11B10_FLOAT:
-            break;
-        default:
-            frame.ColourIsLinearHdr = false;
-        }
-    }
+        frame.ColourIsLinearHdr &= DlssNr::FormatCanHoldLinearHdr(colourAuthority->GetDesc().Format);
     if (finalOutput != nullptr)
     {
         frame.OutputWidth = static_cast<unsigned int>(finalOutput->GetDesc().Width);

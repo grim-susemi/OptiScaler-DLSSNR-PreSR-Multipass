@@ -46,14 +46,15 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         targetState = to;
     };
 
-    ID3D12Device* device = nullptr;
+    Microsoft::WRL::ComPtr<ID3D12Device> deviceRef;
 
-    if (FAILED(target->GetDevice(IID_PPV_ARGS(&device))) || device == nullptr)
+    if (FAILED(target->GetDevice(IID_PPV_ARGS(&deviceRef))))
     {
         ReportSkipOnce("the output texture belongs to no D3D12 device");
         return;
     }
 
+    auto* device = deviceRef.Get();
     const D3D12_RESOURCE_DESC desc = target->GetDesc();
     const auto active =
         frame.BeforeUpscale
@@ -62,7 +63,6 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     if (!active)
     {
         ReportSkipOnce("the pre-SR active colour size is invalid");
-        device->Release();
         return;
     }
     const auto width = active->width;
@@ -81,23 +81,9 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     if (!guides.depth.valid() || !guides.motion.valid())
     {
         ReportSkipOnce("depth or motion-vector subrect is empty");
-        device->Release();
         return;
     }
     const auto guideWidth = guides.depth.width, guideHeight = guides.depth.height;
-    const auto motionWidth = guides.motion.width, motionHeight = guides.motion.height;
-    const auto depthBaseX = guides.depth.x, depthBaseY = guides.depth.y;
-    const auto motionBaseX = guides.motion.x, motionBaseY = guides.motion.y;
-
-    nr.guideWidth = guideWidth;
-    nr.guideHeight = guideHeight;
-    nr.guideDepthInverted = frame.DepthInverted;
-
-    // The game's own encoding, passed through. Every resource already carries a subrect saying how
-    // big it is, so scaling by the resolution ratio on top of that counts it twice -- vectors come
-    // out too long and the model warps its history past where the surface went.
-    nr.guideMvScaleX = frame.MvScaleX;
-    nr.guideMvScaleY = frame.MvScaleY;
 
     if (frame.Reset)
     {
@@ -112,7 +98,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     // Guide dimensions can change without rebuilding the model; report changes as they occur.
 
     const GuideReport guidesNow {
-        true,  nr.guideDepthInverted, nr.guideMvScaleX, nr.guideMvScaleY, guideWidth, guideHeight,
+        true,  frame.DepthInverted, frame.MvScaleX, frame.MvScaleY, guideWidth, guideHeight,
         width, (unsigned int) height
     };
 
@@ -120,22 +106,20 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     {
         loggedGuides = guidesNow;
         LOG_INFO("DLSS-NR guides: depth {}, motion vector scale {} x {}, guides {}x{} for a {}x{} frame",
-                 nr.guideDepthInverted ? "inverted" : "not inverted", nr.guideMvScaleX, nr.guideMvScaleY,
+                 frame.DepthInverted ? "inverted" : "not inverted", frame.MvScaleX, frame.MvScaleY,
                  guideWidth, guideHeight, width, height);
     }
 
-    const unsigned int configuredPasses =
+    const unsigned int requestedPasses =
         std::clamp(cfg.DlssNrPasses.value_or_default(), 1u,
                    cfg.DlssNrUnlockPasses.value_or_default() ? DlssNr::MaxPassCount : DlssNr::DefaultMaxPassCount);
-    const unsigned int requestedPasses = configuredPasses;
     for (auto& model : nr.models)
-        model.AdvanceEpoch(frame.SubmissionEpoch);
+        model.Collect();
     if ((!NVNGXProxy::IsDx12Inited() && !NVNGXProxy::InitDx12(device)) || !DlssNr::Proxy::Context::Available())
     {
         nr.failed = true;
         nr.reason = "the NVIDIA NGX driver does not provide Neural Rendering";
         LOG_ERROR("DLSS-NR unavailable: {}", nr.reason);
-        device->Release();
         return;
     }
 
@@ -143,16 +127,13 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     float workScale = cfg.DlssNrWorkingScale.value_or_default();
     if (!std::isfinite(workScale))
         workScale = 1.0f;
-    workScale = workScale < 0.25f ? 0.25f : (workScale > 2.0f ? 2.0f : workScale);
+    workScale = std::clamp(workScale, 0.25f, 2.0f);
     const auto workWidth = (unsigned int) (width * workScale + 0.5f);
     const auto workHeight = (unsigned int) (height * workScale + 0.5f);
     const bool reduced = workWidth != width || workHeight != height;
     if (!PrepareRunModels(cmdList, device, frame, desc, { width, height }, { workWidth, workHeight },
                           workScale, requestedPasses))
-    {
-        device->Release();
         return;
-    }
     // The parameter adapter already combined the HDR flag with the active color format.
     const bool isHdrBuffer = frame.ColourIsLinearHdr;
 
@@ -166,14 +147,11 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
                  isHdrBuffer ? "on" : "off");
     }
 
-    const bool haveCodec = shader.IsInit();
-
-    if (!haveCodec)
+    if (!shader.IsInit())
     {
         nr.failed = true;
         nr.reason = "the colour codec would not compile";
         LOG_ERROR("DLSS-NR unavailable: {}", nr.reason);
-        device->Release();
         return;
     }
 
@@ -192,8 +170,6 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
             LOG_INFO("DLSS-NR wrote matched before/after frames to {}", written);
     }
 
-    // Paper white maps the frame into the model's display-referred proxy.
-
     ResTrack_Dx12::HookLateNrQueue(device);
     if (gpuTime == nullptr)
         gpuTime = std::make_unique<DlssNrGpuTime>(device, "total");
@@ -201,8 +177,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     if (ngxTime == nullptr)
         ngxTime = std::make_unique<DlssNrGpuTime>(device, "model");
 
-    if (gpuTime != nullptr)
-        gpuTime->Start(cmdList);
+    gpuTime->Start(cmdList);
 
     // Copy just the live image, not the stale right/bottom margins. Do this only after model
     // creation/pending-submission early returns, and inside the measured GPU interval. The compact
@@ -259,7 +234,6 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         nr.reset = true;
         ReportSkipOnce("the game's depth or motion vectors could not be made readable this frame");
         FinishColor(false);
-        device->Release();
         return;
     }
 
@@ -267,8 +241,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     const float mvToWorkX = width != 0 ? (float) workWidth / (float) width : 1.0f;
     const float mvToWorkY = height != 0 ? (float) workHeight / (float) height : 1.0f;
 
-    if (ngxTime != nullptr)
-        ngxTime->Start(cmdList);
+    ngxTime->Start(cmdList);
 
     // Count only a contiguous set of ready, separate feature histories. A failed extra creation never
     // falls back to reusing the main feature: that tells one temporal model several frames elapsed in
@@ -284,14 +257,11 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         }
     }
 
+    if (loggedConfigured != requestedPasses || loggedEffective != effectivePasses)
     {
-
-        if (loggedConfigured != configuredPasses || loggedEffective != effectivePasses)
-        {
-            loggedConfigured = configuredPasses;
-            loggedEffective = effectivePasses;
-            LOG_INFO("DLSS-NR model passes: configured {}, effective {}", configuredPasses, effectivePasses);
-        }
+        loggedConfigured = requestedPasses;
+        loggedEffective = effectivePasses;
+        LOG_INFO("DLSS-NR model passes: configured {}, effective {}", requestedPasses, effectivePasses);
     }
 
     // Keep the encoded base immutable; ping-pong model outputs and compose the final delta once.
@@ -334,20 +304,26 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     const bool enlargementReset = nr.reset;
     bool compositionSucceeded = false;
 
+    DlssNr::Proxy::Frame modelFrame {};
+    modelFrame.depth = depthIn;
+    modelFrame.motion = motionIn;
+    modelFrame.size = { workWidth, workHeight };
+    modelFrame.guides = guides;
+    modelFrame.depthInverted = frame.DepthInverted;
+    modelFrame.reset = nr.reset;
+    modelFrame.mvScaleX = frame.MvScaleX * mvToWorkX;
+    modelFrame.mvScaleY = frame.MvScaleY * mvToWorkY;
+
     for (unsigned int pass = 0; pass < effectivePasses && result == NVSDK_NGX_Result_Success; ++pass)
     {
         MakeModelWritable(passOutput);
         bool evaluated = false;
-        result = static_cast<int>(nr.models[pass].Run(
-            cmdList, device, passInput, depthIn, motionIn, passOutput, workWidth, workHeight, guideWidth,
-            guideHeight, motionWidth, motionHeight, depthBaseX, depthBaseY, motionBaseX, motionBaseY,
-            nr.guideDepthInverted, nr.reset, nr.guideMvScaleX * mvToWorkX, nr.guideMvScaleY * mvToWorkY,
-            ModelSettings(cfg, pass), frame.SubmissionEpoch, &evaluated));
+        modelFrame.color = passInput;
+        modelFrame.output = passOutput;
+        result = static_cast<int>(nr.models[pass].Run(cmdList, device, modelFrame, PassSettings(cfg, pass),
+                                                     frame.SubmissionEpoch, &evaluated));
         modelRunning = evaluated && result == NVSDK_NGX_Result_Success;
-        if (!evaluated)
-            break;
-
-        if (result != NVSDK_NGX_Result_Success)
+        if (!evaluated || result != NVSDK_NGX_Result_Success)
             break;
 
         finalAnswer = passOutput;
@@ -374,8 +350,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         }
     }
 
-    if (ngxTime != nullptr)
-        ngxTime->End(cmdList);
+    ngxTime->End(cmdList);
 
     nr.reset = clampFailed || finalAnswer == nullptr;
 
@@ -466,10 +441,6 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
                     D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         }
 
-        MakeModelWritable(nr.output);
-        if (nr.passScratch != nullptr)
-            MakeModelWritable(nr.passScratch);
-
         if (superDownOk)
             Barrier(cmdList, nr.outputNative, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                     D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -528,6 +499,4 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     // Leave the staging copy as the next frame expects to find it.
     Barrier(cmdList, nr.colorCopy, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
             D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-
-    device->Release();
 }

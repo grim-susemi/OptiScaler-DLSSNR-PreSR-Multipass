@@ -1,13 +1,6 @@
 #include "pch.h"
 #include "DlssNr_Dx12_State.h"
 
-DlssNr::Proxy::Settings DlssNr_Dx12::State::ModelSettings(const Config& cfg, unsigned int pass)
-{
-    const auto tuning = PassTuning(cfg, pass);
-    return { PassPreset(cfg, pass), PassStyle(cfg, pass), tuning.intensity, tuning.structure,
-             tuning.tone, tuning.skin, tuning.autoMask };
-}
-
 bool DlssNr_Dx12::State::PrepareRunModels(ID3D12GraphicsCommandList* cmdList, ID3D12Device* device,
                                         const DlssNrFrameInfo& frame, const D3D12_RESOURCE_DESC& desc,
                                         DlssNr::ColorExtent native, DlssNr::ColorExtent work,
@@ -25,10 +18,7 @@ bool DlssNr_Dx12::State::PrepareRunModels(ID3D12GraphicsCommandList* cmdList, ID
     const bool placementChanged = nr.width != 0 && (nr.beforeUpscale != frame.BeforeUpscale ||
                                                     nr.rayReconstruction != frame.RayReconstruction);
 
-    // The model reads its tuning once, while the feature is built, so a changed setting only takes
-    // effect when the feature is rebuilt. TuningMatchesFeature was written to notice that and then
-    // never called, which is why every one of these controls appeared to do nothing until something
-    // else -- a resolution change -- happened to force a rebuild by accident.
+    // Tuning changes require rebuilding the feature, but not its scratch textures.
     const bool tuningChanged = !TuningMatchesFeature(cfg, requestedPasses);
 
     if (resolutionChanged || placementChanged || (nr.models[0].HasFeature() && tuningChanged))
@@ -166,7 +156,7 @@ bool DlssNr_Dx12::State::PrepareRunModels(ID3D12GraphicsCommandList* cmdList, ID
         if (nr.passCreateFailed[pass])
             break;
         bool ready = false;
-        const auto prepared = nr.models[pass].Prepare(cmdList, device, workWidth, workHeight, ModelSettings(cfg, pass),
+        const auto prepared = nr.models[pass].Prepare(cmdList, device, workWidth, workHeight, PassSettings(cfg, pass),
                                                       frame.SubmissionEpoch, &ready);
         if (prepared != NVSDK_NGX_Result_Success)
         {
@@ -178,15 +168,11 @@ bool DlssNr_Dx12::State::PrepareRunModels(ID3D12GraphicsCommandList* cmdList, ID
             }
             LOG_ERROR("DLSS-NR driver creation for pass {} failed: 0x{:X} ({})", pass + 1, prepared,
                       NgxResultName(prepared));
-                return false;
+            return false;
         }
-        nr.builtPreset[pass] = PassPreset(cfg, pass);
-        nr.builtPassTuning[pass] = PassTuning(cfg, pass);
-        nr.builtStyle[pass] = PassStyle(cfg, pass);
+        nr.builtSettings[pass] = PassSettings(cfg, pass);
         if (!ready)
-        {
-                return false;
-        }
+            return false;
     }
 
     return true;
@@ -248,8 +234,7 @@ auto DlssNr_Dx12::State::TuningMatchesFeature(const Config& cfg, unsigned int re
         if (!nr.models[pass].HasFeature())
             continue;
 
-        if (nr.builtPassTuning[pass] != PassTuning(cfg, pass) || nr.builtPreset[pass] != PassPreset(cfg, pass) ||
-            nr.builtStyle[pass] != PassStyle(cfg, pass))
+        if (nr.builtSettings[pass] != PassSettings(cfg, pass))
             return false;
     }
 

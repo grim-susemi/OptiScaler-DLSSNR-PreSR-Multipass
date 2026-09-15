@@ -78,13 +78,14 @@ int main()
     ID3D12Resource color, depth, motion, output;
     bool evaluated = true;
     uint64_t epoch = 0;
-    DlssNr::Proxy::Settings settings { 0, 0, 0.5f, 1.0f, 0.0f, -1.0f, true };
+    DlssNr::ModelSettings settings { 0, 0, 0.5f, 1.0f, 0.0f, -1.0f, true };
     auto run = [&](bool advance = true)
     {
         if (advance)
             ++epoch;
-        return proxy.Run(&commands, &device, &color, &depth, &motion, &output, 1920, 1080, 1280, 720, 1920, 1080, 12,
-                         24, 32, 48, true, false, 0.5f, -0.25f, settings, epoch, &evaluated);
+        const DlssNr::Proxy::Frame frame { &color, &depth, &motion, &output, { 1920, 1080 },
+            { { 12, 24, 1280, 720 }, { 32, 48, 1920, 1080 } }, true, false, 0.5f, -0.25f };
+        return proxy.Run(&commands, &device, frame, settings, epoch, &evaluated);
     };
     auto value = []<typename T>(const char* key)
     {
@@ -163,11 +164,12 @@ int main()
         DlssNr::Proxy::Context other;
         assert(run() == NVSDK_NGX_Result_Success && !evaluated);
         auto* firstParams = Mock::latest;
-        DlssNr::Proxy::Settings otherSettings { 3, 2, 0.75f, 0.4f, 0.3f, 0.2f, false };
+        DlssNr::ModelSettings otherSettings { 3, 2, 0.75f, 0.4f, 0.3f, 0.2f, false };
         auto runOther = [&]
         {
-            return other.Run(&commands, &device, &color, &depth, &motion, &output, 1280, 720, 1280, 720, 1280, 720, 0,
-                             0, 0, 0, false, false, 1.0f, 1.0f, otherSettings, ++epoch, &evaluated);
+            const DlssNr::Proxy::Frame frame { &color, &depth, &motion, &output, { 1280, 720 },
+                { { 0, 0, 1280, 720 }, { 0, 0, 1280, 720 } } };
+            return other.Run(&commands, &device, frame, otherSettings, ++epoch, &evaluated);
         };
         assert(runOther() == NVSDK_NGX_Result_Success && !evaluated);
         auto* secondParams = Mock::latest;
@@ -196,7 +198,7 @@ int main()
     assert(run() == NVSDK_NGX_Result_Success && !evaluated);
     proxy.Release();
     assert(Mock::handles.size() == 1);
-    for (int frame = 0; frame < 100; ++frame) proxy.AdvanceEpoch(++epoch);
+    for (int frame = 0; frame < 100; ++frame) proxy.Collect();
     assert(Mock::handles.size() == 1);
     proxy.ResetRecording(&commands);
     assert(Mock::handles.empty() && Mock::allocations == Mock::destructions);

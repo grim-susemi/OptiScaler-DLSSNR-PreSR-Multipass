@@ -160,9 +160,8 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     lifetime.Collect();
     CheckCaptureTrigger();
 
-    if (captureWriteAtFrame != 0 && frames >= captureWriteAtFrame)
+    if (captureFrames.isActive())
     {
-        captureWriteAtFrame = 0;
         const auto captureDir = Util::DllPath().remove_filename() / "dlssnr-capture";
         const auto written = captureFrames.write(captureDir);
 
@@ -451,8 +450,6 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
             captureFrames.record(cmdList, device, nr.colorCopy, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                                  target, targetState);
 
-            if (captureFrames.readyToWrite() && captureWriteAtFrame == 0)
-                captureWriteAtFrame = frames + 8;
         }
     }
     else if (result != NVSDK_NGX_Result_Success)

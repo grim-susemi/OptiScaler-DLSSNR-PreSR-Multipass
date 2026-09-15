@@ -1,6 +1,7 @@
 #include "pch.h"
 
 #include "DlssNr_ExposureScan_Internal.h"
+#include "DlssNr_Readback.h"
 
 #include <DirectXPackedVector.h>
 #include <Config.h>
@@ -43,22 +44,7 @@ bool EnsureReadback(ID3D12Device* device)
         if (g_scan.readback[i] != nullptr)
             continue;
 
-        D3D12_HEAP_PROPERTIES heap {};
-        heap.Type = D3D12_HEAP_TYPE_READBACK;
-
-        D3D12_RESOURCE_DESC desc {};
-        desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-        desc.Width = kStride * kMaxCandidates;
-        desc.Height = 1;
-        desc.DepthOrArraySize = 1;
-        desc.MipLevels = 1;
-        desc.Format = DXGI_FORMAT_UNKNOWN;
-        desc.SampleDesc.Count = 1;
-        desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-
-        if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                   D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-                                                   IID_PPV_ARGS(&g_scan.readback[i]))))
+        if (!DlssNr::CreateReadbackBuffer(device, kStride * kMaxCandidates, &g_scan.readback[i]))
         {
             std::lock_guard<std::mutex> lock(g_scanMutex);
             g_scan.status = "could not allocate the readback buffers";
@@ -69,13 +55,6 @@ bool EnsureReadback(ID3D12Device* device)
     return true;
 }
 
-// Whether the scan should be running at all.
-//
-// Choosing it as the white point's source is the whole of the answer for anybody using this.
-// The separate setting survives as a developer override, for the one case a user has no reason
-// to want: watching the scan in a game that supplies a REAL exposure, so the two can be
-// compared in the log. That is validation work, not a control, and it does not belong in a
-// panel.
 }
 using namespace Detail;
 void Tick(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList, uint64_t submissionEpoch)

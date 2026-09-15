@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include "../OptiScaler/dlssnr/DlssNr_PipelineCapture.h"
 #include "../OptiScaler/dlssnr/DlssNr_GpuLifetime.h"
+#include "../OptiScaler/dlssnr/DlssNr_Capture.h"
 using Microsoft::WRL::ComPtr;
 static void check(HRESULT hr) { if (FAILED(hr)) throw std::runtime_error("D3D12 failure"); }
 static void expect(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
@@ -77,8 +78,54 @@ int main() try
     lifetime.Retire([&] { rejected = !discarded->Write(); delete discarded; });
     check(allocator->Reset()); check(cmd->Reset(allocator.Get(), nullptr)); lifetime.ResetRecording(cmd.Get());
     expect(rejected && !std::filesystem::exists(root / "discarded"), "discarded capture wrote garbage");
+    capture::FrameCapture sequence;
+    sequence.request(20); // Clamp to eight; later record calls must not index past the run.
+    clear(.5f); // The old sparse byte heuristic incorrectly discarded this valid grey float image.
+    for (unsigned i = 0; i < 12; ++i)
+        sequence.record(cmd.Get(), device.Get(), texture.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                        texture.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     check(cmd->Close());
-    std::printf("PASS: matched stage pixels, gated readback, retirement, discarded recording. %s\n", root.string().c_str());
+    check(queue->Wait(gate.Get(), 2));
+    queue->ExecuteCommandLists(1, lists);
+    sequence.Submitted(queue.Get(), 1, lists);
+    const auto sequenceDir = root / "sequence";
+    for (unsigned frameNumber = 0; frameNumber < 100; ++frameNumber)
+        expect(sequence.write(sequenceDir).empty(), "CPU progress released an unfinished capture");
+    expect(!std::filesystem::exists(sequenceDir), "unfinished sequence wrote images");
+    check(gate->Signal(2)); check(queue->Signal(done.Get(), 2));
+    event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    check(done->SetEventOnCompletion(2, event));
+    expect(WaitForSingleObject(event, 10000) == WAIT_OBJECT_0, "sequence GPU timeout"); CloseHandle(event);
+    expect(sequence.write(sequenceDir).empty(), "replayable capture was released");
+    check(allocator->Reset()); check(cmd->Reset(allocator.Get(), nullptr));
+    sequence.ResetRecording(cmd.Get());
+    expect(sequence.write(sequenceDir) == sequenceDir.string() && !sequence.isActive(), "sequence did not finish");
+    for (unsigned i = 0; i < 8; ++i)
+        for (const char* side : { "before", "after" })
+        {
+            char name[32]; std::snprintf(name, sizeof(name), "%s_%02u.raw", side, i);
+            std::ifstream file(sequenceDir / name, std::ios::binary);
+            float actual = 0; file.read(reinterpret_cast<char*>(&actual), sizeof(actual));
+            expect(file.good() && actual == .5f, "sequence pixels or filenames changed");
+        }
+    expect(!std::filesystem::exists(sequenceDir / "before_08.raw"), "sequence exceeded its frame limit");
+    std::ifstream manifest(sequenceDir / "manifest.txt");
+    std::string firstLine; std::getline(manifest, firstLine);
+    expect(firstLine == "frames 8", "sequence manifest changed");
+
+    sequence.request(1);
+    sequence.record(cmd.Get(), device.Get(), texture.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                    texture.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    check(cmd->Close());
+    check(allocator->Reset()); check(cmd->Reset(allocator.Get(), nullptr));
+    sequence.ResetRecording(cmd.Get());
+    const auto discardedSequence = root / "discarded-sequence";
+    expect(sequence.write(discardedSequence).empty() && !std::filesystem::exists(discardedSequence),
+           "discarded sequence wrote uninitialized images");
+    expect(sequence.isActive(), "discarded sequence did not re-arm");
+    sequence.release();
+    check(cmd->Close());
+    std::printf("PASS: stage/sequence pixels, frame limits, GPU-gated readback, retirement, discarded recordings. %s\n", root.string().c_str());
     return 0;
 }
 catch (const std::exception& error) { std::fprintf(stderr, "FAIL: %s\n", error.what()); return 1; }

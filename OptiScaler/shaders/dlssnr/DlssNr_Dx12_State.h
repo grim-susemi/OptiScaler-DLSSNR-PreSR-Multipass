@@ -131,7 +131,6 @@ struct DlssNr_Dx12::State
 
     // A capture requested from outside the game: when the render path has no fence of its own, the write
     // waits until this frame count, by which point the GPU is certainly past the copies.
-    unsigned long long captureWriteAtFrame = 0;
 
     // Dropping a file named dlssnr-capture.trigger beside OptiScaler requests a capture, so a session can
     // be asked for one from outside the game -- no alt-tab, no menu. Checked once a second, effectively.

@@ -14,15 +14,6 @@ enum class Backend
     Vulkan
 };
 
-struct ExposureStatus
-{
-    unsigned long long seenFrames = 0;
-    bool offeredNow = false;
-    bool everOffered = false;
-    float exposure = 0.0f;
-    float preExposure = 1.0f;
-};
-
 // Menu telemetry contains values only. GPU resources remain owned by the shader instance.
 struct StatusSnapshot
 {
@@ -30,7 +21,6 @@ struct StatusSnapshot
     std::string failureReason;
     std::optional<double> gpuTime;
     unsigned long long frames = 0;
-    ExposureStatus exposure;
 };
 
 struct ControlRequests

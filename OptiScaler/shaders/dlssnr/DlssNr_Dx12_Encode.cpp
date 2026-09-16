@@ -10,9 +10,6 @@ void DlssNr_Dx12::State::EncodeInput(EncodeContext& context)
     auto* target = context.target;
     auto& targetState = context.targetState;
     auto& whitePoint = context.whitePoint;
-    auto& exposureTex = context.exposureTex;
-    auto& useGameExposure = context.useGameExposure;
-    auto& exposurePreMul = context.exposurePreMul;
     auto& modelInput = context.modelInput;
     const auto width = nr.width, height = nr.height;
     const auto workWidth = nr.workWidth, workHeight = nr.workHeight;
@@ -25,65 +22,15 @@ void DlssNr_Dx12::State::EncodeInput(EncodeContext& context)
         Barrier(cmdList, target, targetState, to);
         targetState = to;
     };
-    const bool exposureSettingOn = cfg.DlssNrWhitePointSource.value_or_default() == 1;
-
-    // Nothing held from before the option was switched off may survive switching it back on. See
-    // InvalidateExposureMeter for what froze and why it read as a colour cast.
-    if (exposureSettingOn && !nr.exposureSettingWasOn)
-    {
-        InvalidateExposureMeter();
-        LOG_INFO("DLSS-NR exposure: option switched on, held reading discarded");
-    }
-
-    nr.exposureSettingWasOn = exposureSettingOn;
-
-    const bool wantExposure = exposureSettingOn && frame.ExposureTexture != nullptr;
-
-    if (nr.meter != nullptr && wantExposure)
-    {
-        DlssNrConstants meterParams {};
-        meterParams.Mode = DlssNrMode_Meter;
-
-        // Only the game-exposure texel is read back.
-        meterParams.Width = 1;
-        meterParams.Height = 1;
-
-        const D3D12_RESOURCE_STATES priorTargetState = targetState;
-        TransitionTarget(D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-        shader.DispatchPass(cmdList, meterParams, target, nullptr, nullptr, (ID3D12Resource*) frame.ExposureTexture,
-                            nullptr, nr.meter, nullptr);
-        TransitionTarget(priorTargetState);
-
-        CopyMeterToReadback(cmdList);
-        ConsumeMeterReadback();
-    }
-
-    nr.gamePreExposure = frame.PreExposure;
-
-    whitePoint =
-        frame.WhitePointOverride > 0.0f ? frame.WhitePointOverride : ResolveWhitePoint(cfg, isHdrBuffer);
-
-    // Zero-latency exposure (D3D12, source 1): when the game hands us a live exposure texture, the
-    // white point is recomputed in-shader every frame from it (ExposurePreMul / exposure) instead of
-    // the 3-4 frame CPU meter readback. whitePoint above still rides along in gWhitePoint as the
-    // fallback the shader uses if the live sample is missing or absurd. Bound at t4 (InPrevEdit) below.
-
-
-
-    if (cfg.DlssNrWhitePointSource.value_or_default() == 1 && frame.ExposureTexture != nullptr)
-    {
-        exposureTex = (ID3D12Resource*) frame.ExposureTexture;
-        useGameExposure = 1;
-        const float trim = std::clamp(cfg.DlssNrWhitePointTrim.value_or_default(), 0.25f, 4.0f);
-        exposurePreMul = nr.gamePreExposure * trim;
-    }
+    whitePoint = frame.WhitePointOverride > 0.0f ? frame.WhitePointOverride
+                                               : cfg.DlssNrWhitePointScale.value_or_default();
 
     // Frame hold. Freeze the encode's input so a live setting change re-renders the same frame. This
     // is self-contained on purpose: it copies the output aside on hold-on and copies it BACK over the
     // live output before the encode reads it while held, so the encode's own path and barriers below
     // are untouched and the default (hold off) is byte-identical. See design/frame-hold.md.
     //
-    // `target` is UAV here (normalised at entry, restored by the meter block above). The held copy is
+    // `target` is UAV here (normalised at entry). The held copy is
     // left in COPY_SOURCE after capture and stays there for every restore.
     {
         const bool hold = cfg.DlssNrHoldFrame.value_or_default();
@@ -131,13 +78,10 @@ void DlssNr_Dx12::State::EncodeInput(EncodeContext& context)
                 TransitionTarget(priorTargetState);
             }
 
-            // Suspend white-point measurement while held: use the snapshot so it cannot drift and
-            // confound the comparison. (No-op on the capture frame, where the snapshot IS whitePoint.)
+            // Keep the captured white point for the held comparison.
             if (nr.heldActive)
             {
                 whitePoint = nr.heldWhitePoint;
-                useGameExposure = 0;
-                exposureTex = nullptr;
             }
         }
         else if (nr.heldActive)
@@ -155,14 +99,12 @@ void DlssNr_Dx12::State::EncodeInput(EncodeContext& context)
     // the resolve adds the model's edit back at full scale.
     encodeParams.Passthrough = isHdrBuffer ? 0u : 1u;
     encodeParams.WhitePoint = whitePoint;
-    encodeParams.UseGameExposure = useGameExposure;
-    encodeParams.ExposurePreMul = exposurePreMul;
     encodeParams.ReversibleMode = cfg.DlssNrReversibleMode.value_or_default();
     encodeParams.Width = width;
     encodeParams.Height = height;
 
     TransitionTarget(D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    shader.DispatchPass(cmdList, encodeParams, target, nullptr, nullptr, nullptr, exposureTex, nr.colorCopy,
+    shader.DispatchPass(cmdList, encodeParams, target, nullptr, nullptr, nullptr, nullptr, nr.colorCopy,
                         nr.hdrCopy);
 
     if (targetSupportsUav)
@@ -244,15 +186,11 @@ DlssNrConstants DlssNr_Dx12::State::MakeResolveConstants(const EncodeContext& co
 {
     const auto& cfg = *Config::Instance();
     const auto whitePoint = context.whitePoint;
-    const auto useGameExposure = context.useGameExposure;
-    const auto exposurePreMul = context.exposurePreMul;
     const auto width = nr.width, height = nr.height;
     const bool isHdrBuffer = context.frame.ColourIsLinearHdr;
     DlssNrConstants resolveParams {};
     resolveParams.Mode = DlssNrMode_Resolve;
     resolveParams.WhitePoint = whitePoint;
-    resolveParams.UseGameExposure = useGameExposure;
-    resolveParams.ExposurePreMul = exposurePreMul;
     resolveParams.Width = width;
     resolveParams.Height = height;
     resolveParams.TransferStrength = cfg.DlssNrTransferStrength.value_or_default();

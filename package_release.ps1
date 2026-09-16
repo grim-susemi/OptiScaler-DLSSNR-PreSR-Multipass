@@ -42,7 +42,7 @@ $files['docs/RELEASE-v0.8.4.md'] = Join-Path $root 'docs/RELEASE-v0.8.4.md'
 foreach ($name in @('OptiScaler.ini', 'setup_windows.bat', 'setup_linux.sh', 'README.md', 'INSTALL-DLSSNR.md', 'LICENSE',
                     'Features.md', 'Config.md', 'Spoofing.md', 'images/gh-sponsor-red.png', 'images/bmac.png',
                     'CONTRIBUTING.md', 'OptiScaler/dlssnr/README.md', 'tests/nr_private_upscaler_smoke.md',
-                    'OptiScaler/dlssnr/design/frame-hold.md', 'OptiScaler/dlssnr/design/multi-point-anchoring.md',
+                    'OptiScaler/dlssnr/design/frame-hold.md',
                     'OptiScaler/dlssnr/design/pre-sr-multipass.md')) {
     $files[$name] = Join-Path $root $name
 }

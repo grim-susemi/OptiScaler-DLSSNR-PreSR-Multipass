@@ -320,10 +320,6 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
     frame.MvScaleX = Float(source, NVSDK_NGX_Parameter_MV_Scale_X, 1);
     frame.MvScaleY = Float(source, NVSDK_NGX_Parameter_MV_Scale_Y, 1);
     frame.PreExposure = std::max(Float(source, NVSDK_NGX_Parameter_DLSS_Pre_Exposure, 1), 1e-4f);
-    frame.ExposureTexture = owner.GetResource(source, NVSDK_NGX_Parameter_ExposureTexture, "ExposureTexture");
-    owner.nr.exposureOfferedNow = frame.ExposureTexture != nullptr;
-    owner.nr.exposureEverOffered = owner.nr.exposureEverOffered || owner.nr.exposureOfferedNow;
-    ++owner.nr.exposureFrames;
     const auto before = owner.nr.successfulDispatches;
     {
         // Run consumes readable guides; restore their arrival states even when NR declines the frame.
@@ -355,7 +351,6 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
         };
         read(depth, inputStates.depth);
         read(motion, inputStates.motion);
-        read(static_cast<ID3D12Resource*>(frame.ExposureTexture), inputStates.exposure);
         owner.Run(cmd, g.edited, depth, motion, g.edited, frame, queue);
     }
     const bool evaluated = owner.nr.successfulDispatches != before;
@@ -424,7 +419,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
         encode.Mode = DlssNrMode_EncodeResidual;
         encode.Width = g.w;
         encode.Height = g.h;
-        encode.ExposurePreMul = frame.PreExposure;
+        encode.ResidualScale = frame.PreExposure;
         bool ok;
         if (!accumulated)
         {
@@ -558,7 +553,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::After(ID3D12GraphicsCommandList* cmd
     apply.Mode = DlssNrMode_ApplyResidual;
     apply.Width = g.outW;
     apply.Height = g.outH;
-    apply.ExposurePreMul = pair.scale;
+    apply.ResidualScale = pair.scale;
     const bool ok = g.codec->DispatchPass(cmd, apply, g.clean, g.residualOutput, nullptr, nullptr, nullptr,
                                           g.composed, nullptr);
     if (ok)

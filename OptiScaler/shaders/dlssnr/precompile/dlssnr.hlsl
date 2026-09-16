@@ -27,8 +27,8 @@ cbuffer Params : register(b0)
     float gDebugScale;   // what the debug views are scaled by, held still while the meter moves
     uint  gReversibleMode; // 0 knee, 1 Neutwo+composed, 2 Neutwo+replace, 3 hybrid+composed, 4 hybrid+replace
     uint  gApplyModel;     // 0 output the clean frame (pass still runs), 1 apply the model's edit
-    uint  gUseGameExposure;// D3D12 source-1 only: 1 = read the game's live exposure in-shader (t4)
-    float gExposurePreMul; // preExposure * trim, so the live white point is gExposurePreMul / exposure
+    uint  gReserved;
+    float gResidualScale;
     uint  gSkinProtection;
     uint  gShowSkinMask;
     float gSkinDetail;
@@ -207,12 +207,6 @@ Texture2D<float4>   gOriginal : register(t2);  // resolve: the untouched frame.
 #endif
 Texture2D<float4>   gMotion   : register(t3);  // resolve, accumulating: the game's motion vectors.
 
-// The game's 1x1 exposure texture, bound at t4 (DispatchPass's "prev edit" SRV slot). D3D12 only:
-// Vulkan has no eighth descriptor for it and keeps computing the white point on the CPU, so the whole
-// live path is compiled out under VK_MODE and gUseGameExposure is never set on that backend.
-#ifndef VK_MODE
-Texture2D<float4>   gExposure : register(t4);
-#endif
 #ifdef VK_MODE
 [[vk::binding(5, 0)]]
 #endif
@@ -226,26 +220,10 @@ RWTexture2D<float4> gKeep     : register(u1);  // encode: the untouched copy. un
 #endif
 SamplerState        gLinear   : register(s0);  // so the edit can be read at a different size
 
-// The picture white point. Sources 0 (paper white) and 2 (scan) resolve it on the CPU and pass it in
-// gWhitePoint; source 1 (the game's own exposure) also passes a CPU value in gWhitePoint as a fallback,
-// but when the exposure texture is bound (D3D12) it is recomputed HERE from the live exposure --
-// gExposurePreMul (= preExposure * trim) / exposure -- which removes the 3-4 frame CPU-readback lag the
-// meter path has. The clamp matches the CPU path's [0.01, 4096]. Vulkan compiles the live path out and
-// always returns the CPU value, so its behaviour is unchanged.
 float WhitePoint()
 {
-#ifndef VK_MODE
-    if (gUseGameExposure != 0)
-    {
-        float e = gExposure.Load(int3(0, 0, 0)).r;
-        if (e > 1e-6 && e < 1e6)
-            return clamp(gExposurePreMul / e, 0.01, 4096.0);
-        // A missing or absurd sample falls through to the CPU value the meter path still maintains.
-    }
-#endif
     return max(gWhitePoint, 1e-4);
 }
-
 
 static const float3 kLuma = float3(0.2126, 0.7152, 0.0722);
 
@@ -464,7 +442,7 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     {
         float3 difference = SanitizeFinite3(gModel.Load(int3(id.xy, 0)).rgb -
                                             gSource.Load(int3(id.xy, 0)).rgb, 0.0);
-        float3 d = difference / max(gExposurePreMul, 1e-4);
+        float3 d = difference / max(gResidualScale, 1e-4);
         gTarget[id.xy] = float4(0.5 + 0.5 * d / (1.0 + abs(d)), 1.0);
         return;
     }
@@ -474,7 +452,7 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         float3 encoded = SanitizeFinite3(gModel.Load(int3(id.xy, 0)).rgb, 0.5);
         // Limit the inverse near its poles: DLSS can ring outside the carrier's [0,1] range.
         float3 signedEdit = clamp(2.0 * encoded - 1.0, -0.999, 0.999);
-        float3 edit = signedEdit / (1.0 - abs(signedEdit)) * max(gExposurePreMul, 1e-4);
+        float3 edit = signedEdit / (1.0 - abs(signedEdit)) * max(gResidualScale, 1e-4);
         gTarget[id.xy] = float4(max(SanitizeFinite3(base.rgb + edit, base.rgb), 0.0), base.a);
         return;
     }
@@ -489,14 +467,6 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         // Already encoded: restore the input range without applying the tone curve again.
         float4 raw = gSource.Load(int3(id.xy, 0));
         gTarget[id.xy] = float4(saturate(SanitizeFinite3(raw.rgb, 0.5)), raw.a);
-        return;
-    }
-
-    if (gMode == 3)
-    {
-        // Both backends consume only the game-exposure sample at (0,0).
-        float exposure = (id.x == 0 && id.y == 0) ? gMotion.Load(int3(0, 0, 0)).r : 0.0;
-        gTarget[id.xy] = float4(exposure, 0.0, 0.0, 1.0);
         return;
     }
 

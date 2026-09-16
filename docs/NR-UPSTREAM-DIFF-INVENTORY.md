@@ -74,11 +74,6 @@ Reference: official master `5ee53e38`. Each group states why its changed files a
 - `OptiScaler/dlssnr/DlssNrFinished_Vk.h`
 - `OptiScaler/dlssnr/DlssNrPipeline_Vk.h`
 - `OptiScaler/dlssnr/DlssNr_Capture.h`
-- `OptiScaler/dlssnr/DlssNr_ExposureAnchors.cpp`
-- `OptiScaler/dlssnr/DlssNr_ExposureReadback.cpp`
-- `OptiScaler/dlssnr/DlssNr_ExposureScan.cpp`
-- `OptiScaler/dlssnr/DlssNr_ExposureScan.h`
-- `OptiScaler/dlssnr/DlssNr_ExposureScan_Internal.h`
 - `OptiScaler/dlssnr/DlssNr_FinishedPictureBridge_Dx11.h`
 - `OptiScaler/dlssnr/DlssNr_FinishedReady.h`
 - `OptiScaler/dlssnr/DlssNr_GpuLifetime.cpp`
@@ -108,7 +103,6 @@ Reference: official master `5ee53e38`. Each group states why its changed files a
 - `OptiScaler/dlssnr/PassProfiles.h`
 - `OptiScaler/dlssnr/README.md`
 - `OptiScaler/dlssnr/design/frame-hold.md`
-- `OptiScaler/dlssnr/design/multi-point-anchoring.md`
 - `OptiScaler/dlssnr/design/pre-sr-multipass.md`
 
 ## KCD2 swapchain and Vulkan menu/FG compatibility
@@ -176,7 +170,6 @@ Reference: official master `5ee53e38`. Each group states why its changed files a
 - `OptiScaler/shaders/dlssnr/DlssNr_Dx12_Encode.cpp`
 - `OptiScaler/shaders/dlssnr/DlssNr_Dx12_Enlarge.cpp`
 - `OptiScaler/shaders/dlssnr/DlssNr_Dx12_Evaluate.cpp`
-- `OptiScaler/shaders/dlssnr/DlssNr_Dx12_Exposure.cpp`
 - `OptiScaler/shaders/dlssnr/DlssNr_Dx12_FinishedCompose.cpp`
 - `OptiScaler/shaders/dlssnr/DlssNr_Dx12_FinishedQueue.cpp`
 - `OptiScaler/shaders/dlssnr/DlssNr_Dx12_Hold.cpp`

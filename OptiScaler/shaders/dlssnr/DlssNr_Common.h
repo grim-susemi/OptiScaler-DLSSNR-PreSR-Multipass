@@ -21,7 +21,6 @@ enum DlssNrMode : uint32_t
     DlssNrMode_Encode = 0,         // the frame -> a tone-mapped proxy, plus an untouched copy
     DlssNrMode_Resolve = 1,        // proxy + the model's answer + the untouched copy -> the edited frame
     DlssNrMode_Downsample = 2,     // the proxy -> a smaller proxy, when the model works below full size
-    DlssNrMode_Meter = 3,          // the exposure texture -> tile (0,0), for the white point
     DlssNrMode_EncodeResidual = 5, // NR-composed minus original; signed difference encoded around 0.5
     DlssNrMode_ApplyResidual = 6,  // decode private DLSS result and add to clean SR output
     DlssNrMode_UnitExposure = 7,   // constant exposure for the private DLSS feature
@@ -30,16 +29,6 @@ enum DlssNrMode : uint32_t
     DlssNrMode_ResizePrivateGuides = 10
 };
 
-// The meter's grid. 64 x 64 tiles over the whole frame, whatever its size.
-//
-// Tiles rather than pixels because the number wanted is where white sits, not how bright the
-// brightest pixel is: a single specular hit or a sky pixel is not the white point, and a frame's
-// maximum is exactly the statistic that would be dominated by one. Averaging each tile first means
-// anything smaller than a four-thousandth of the frame cannot decide the answer on its own.
-//
-// 4096 values is also small enough to read back and take a real percentile of on the CPU, rather
-// than approximating one on the GPU.
-constexpr uint32_t kDlssNrMeterGrid = 64;
 // Finished-colour shader's exposure-normalised brightness response, -12..12 stops.
 constexpr uint32_t kDlssNrHdrCurveBins = 48;
 
@@ -99,16 +88,6 @@ struct DlssNrFrameInfo
     // epoch is never evaluated until this value changes.
     unsigned long long SubmissionEpoch = 0;
     float FrameTimeMs = 16.67f;
-
-    // The game's own exposure: a 1x1 texture holding, in the SDK's words, "the final exposure scale".
-    //
-    // This is the number that makes a cave and a field comparable, and it is the reason a fixed paper
-    // white cannot serve both. It comes from the game, decided before anything here runs, so unlike a
-    // statistic measured off the frame it cannot be pulled around by what this pass writes.
-    //
-    // May be null on any given frame -- GTA V supplied it, then did not, three times in one session --
-    // so whoever consumes it holds the last good value rather than falling back to a default.
-    void* ExposureTexture = nullptr;
 
     // The scale the game multiplied its buffer by for float precision, which DLSS is told so it can
     // undo it. Usually 1. Divided out before the exposure is applied, exactly as FSR's PrepareRgb does.
@@ -205,7 +184,7 @@ struct alignas(256) DlssNrConstants
     // They have to be scaled into the frame's units or the game's tonemapper shows them wrong, but
     // scaling them by the live white point makes the instrument move with the thing being measured:
     // two captures at different exposures then differ by the exposure, whatever the edit did. This
-    // is the user's own multiplier, which holds still while the meter works.
+    // is the user's own multiplier, independent of the image's brightness.
     float DebugScale;
 
     // The reversible-proxy mode. 0 soft knee + our composition (default), 1 unclipped Neutwo proxy +
@@ -218,11 +197,8 @@ struct alignas(256) DlssNrConstants
     // to A/B against), 1 = apply the model's edit. Trailing scalar, mirrored in the shader cbuffer.
     uint32_t ApplyModel;
 
-    // D3D12 source-1 zero-latency exposure. UseGameExposure = 1 makes the shader read the game's live
-    // exposure texture (bound at t4) instead of the CPU-resolved white point; ExposurePreMul is
-    // preExposure * trim, so the live white point is ExposurePreMul / exposure. Mirrored in the cbuffer.
-    uint32_t UseGameExposure;
-    float ExposurePreMul;
+    uint32_t Reserved; // Preserve the shared constant-buffer layout.
+    float ResidualScale; // Scene pre-exposure used to encode/decode the private residual carrier.
     // Optional colour-based final-composition mask. Not the runtime's semantic mask.
     uint32_t SkinProtection;
     uint32_t ShowSkinMask;

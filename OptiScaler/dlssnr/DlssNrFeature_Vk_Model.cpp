@@ -186,8 +186,6 @@ void ModelVk::Impl::Shutdown()
     state.proxySmall.Destroy(state.device);
     state.outputNative.Destroy(state.device);
     state.keep.Destroy(state.device);
-    state.meter.Destroy(state.device);
-    DestroyMeterReadback();
 
     state.superUp.reset();
     state.superDown.reset();
@@ -286,15 +284,6 @@ bool ModelVk::Impl::PrepareModels(VkCommandBuffer cmdBuffer, const DlssNrFrameIn
         state.passClamp.Destroy(state.device);
 
         const VkFormat working = VK_FORMAT_R16G16B16A16_SFLOAT;
-
-        // The meter is a fixed 8x8 whatever the frame is, so it is only built the once -- but it is
-        // built alongside the rest so that a failure here is caught by the same check.
-        const bool meterReady =
-            (state.meter.Valid() || CreateImage(state.meter, kMeterSide, kMeterSide, VK_FORMAT_R32_SFLOAT)) &&
-            CreateMeterReadback();
-
-        if (!meterReady)
-            LOG_WARN("DLSS-NR Vulkan: no exposure meter; the white point stays on the slider");
 
         state.proxySmall.Destroy(state.device);
         state.outputNative.Destroy(state.device);

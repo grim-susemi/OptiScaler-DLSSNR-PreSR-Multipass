@@ -1,7 +1,6 @@
 #include "pch.h"
 
 #include "DlssNr_MenuOverlay.h"
-#include "DlssNr_ExposureScan.h"
 #include <Config.h>
 #include <imgui/imgui.h>
 #include <algorithm>
@@ -64,83 +63,6 @@ void RenderNrCompareTags()
     // out from the split.
     drawTag(leftText, splitX - margin - leftSize.x, ImVec2(0.0f, 0.0f), ImVec2(splitX, screen.y));
     drawTag(rightText, splitX + margin, ImVec2(splitX, 0.0f), ImVec2(screen.x, screen.y));
-}
-
-void RenderExposureScanIndicator(float alpha)
-{
-    if (!Config::Instance()->DlssNrScanMeter.value_or_default())
-        return;
-
-    if (!DlssNr::ExposureScan::Scanning())
-        return;
-
-    float low = 0.0f, high = 0.0f;
-    const float now = DlssNr::ExposureScan::BestValue(&low, &high);
-
-    // Nothing found yet, or no range to place it in: a dim lamp, which says "watching, no reading"
-    // without saying it in words.
-    const bool reading = now > 0.0f && high > low;
-
-    float lit = 0.0f;
-
-    if (reading)
-    {
-        // An exposure falls as the scene brightens, so the value reads backwards unless the buffer
-        // holds the reciprocal -- the same question the anchor asks, answered from the same setting,
-        // because a lamp contradicting the picture would be worse than no lamp.
-        lit = (high - now) / (high - low);
-
-        if (Config::Instance()->DlssNrScanInverted.value_or_default())
-            lit = 1.0f - lit;
-
-        lit = lit < 0.0f ? 0.0f : (lit > 1.0f ? 1.0f : lit);
-    }
-
-    // Red to amber to green. A straight red-to-green fade passes through a muddy brown at the
-    // midpoint, and the midpoint is where most of a session is spent.
-    const ImVec4 dark(0.90f, 0.22f, 0.20f, 1.0f);
-    const ImVec4 mid(0.95f, 0.75f, 0.20f, 1.0f);
-    const ImVec4 bright(0.35f, 0.88f, 0.38f, 1.0f);
-    const ImVec4 idle(0.45f, 0.45f, 0.45f, 1.0f);
-
-    ImVec4 lamp = idle;
-
-    if (reading)
-    {
-        const float t = lit < 0.5f ? lit * 2.0f : (lit - 0.5f) * 2.0f;
-        const ImVec4& a = lit < 0.5f ? dark : mid;
-        const ImVec4& b = lit < 0.5f ? mid : bright;
-        lamp = ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, 1.0f);
-    }
-
-    const ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - 12.0f, vp->WorkPos.y + 12.0f),
-                            ImGuiCond_Always, ImVec2(1.0f, 0.0f));
-    ImGui::SetNextWindowBgAlpha(alpha);
-
-    if (ImGui::Begin("DlssNrExposureScan", nullptr,
-                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDecoration |
-                         ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing |
-                         ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoMove))
-    {
-        const float r = ImGui::GetFontSize() * 0.38f;
-        const ImVec2 at = ImGui::GetCursorScreenPos();
-        const ImVec2 centre(at.x + r, at.y + ImGui::GetTextLineHeight() * 0.5f);
-
-        ImDrawList* draw = ImGui::GetWindowDrawList();
-        draw->AddCircleFilled(centre, r, ImGui::GetColorU32(lamp), 20);
-        draw->AddCircle(centre, r, ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.6f)), 20, 1.5f);
-
-        ImGui::Dummy(ImVec2(r * 2.0f + 6.0f, ImGui::GetTextLineHeight()));
-        ImGui::SameLine();
-
-        if (reading)
-            ImGui::TextColored(lamp, "%3.0f%%  %.5f", lit * 100.0f, now);
-        else
-            ImGui::TextColored(idle, "--");
-    }
-
-    ImGui::End();
 }
 
 } // namespace DlssNr

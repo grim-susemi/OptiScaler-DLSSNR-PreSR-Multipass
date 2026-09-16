@@ -53,8 +53,7 @@ auto DlssNr_Dx12::State::Publish() -> void
         { !nr.failed && modelRunning && enlargementStatus.empty(),
           nr.failed ? nr.reason : enlargementStatus,
           lastGpuTime,
-          frames,
-          { nr.exposureFrames, nr.exposureOfferedNow, nr.exposureEverOffered, nr.gameExposure, nr.gamePreExposure } });
+          frames });
 }
 
 void DlssNr_Dx12::State::EndGpuTiming(ID3D12GraphicsCommandList* cmdList)

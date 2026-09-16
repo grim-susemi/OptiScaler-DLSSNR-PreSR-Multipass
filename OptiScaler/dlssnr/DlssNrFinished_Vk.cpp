@@ -205,7 +205,6 @@ struct FinishedVk::Impl
         s.validCapture = copy(depth, s.depth, frame.DepthReadWrite) && copy(motion, s.motion, frame.MotionReadWrite);
         vkCmdSetEvent(cmd, s.captured, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
         s.frame = frame;
-        s.frame.ExposureTexture = nullptr;
         s.frame.PreExposure = 1.0f;
         s.frame.FinishedPicture = true;
         s.frame.BeforeUpscale = false;

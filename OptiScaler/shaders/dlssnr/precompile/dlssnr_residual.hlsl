@@ -31,8 +31,8 @@ cbuffer Params : register(b0)
     float gDebugScale;
     uint  gReversibleMode;
     uint  gApplyModel;
-    uint  gUseGameExposure;
-    float gExposurePreMul;
+    uint  gReserved;
+    float gResidualScale;
     uint  gSkinProtection;
     uint  gShowSkinMask;
     float gSkinDetail;

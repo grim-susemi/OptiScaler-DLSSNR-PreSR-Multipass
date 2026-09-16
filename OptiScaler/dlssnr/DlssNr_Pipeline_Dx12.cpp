@@ -86,7 +86,6 @@ ShaderPass_Dx12 MakeDlssNrPass(DlssNr_Dx12& shader, ID3D12Device* device, ID3D12
     auto* color = NrResource(parameters, NVSDK_NGX_Parameter_Color, "DLSSD.Color");
     auto* depth = NrResource(parameters, NVSDK_NGX_Parameter_Depth, "DLSSD.Depth");
     auto* motion = NrResource(parameters, NVSDK_NGX_Parameter_MotionVectors, "DLSSD.MotionVectors");
-    auto* exposure = NrResource(parameters, NVSDK_NGX_Parameter_ExposureTexture, "DLSSD.ExposureTexture");
     const auto states = DlssNr::ResolveInputStates_Dx12(interop);
     const bool supportedSubrects = HasSupportedNrSubrects(parameters, beforeUpscale);
 
@@ -126,7 +125,6 @@ ShaderPass_Dx12 MakeDlssNrPass(DlssNr_Dx12& shader, ID3D12Device* device, ID3D12
     parameters->Get(NVSDK_NGX_Parameter_DLSS_Pre_Exposure, &frame.PreExposure);
     if (frame.PreExposure <= 1e-6f)
         frame.PreExposure = 1.0f;
-    frame.ExposureTexture = exposure;
     parameters->Get(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Width, &frame.RenderSubrectWidth);
     parameters->Get(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Height, &frame.RenderSubrectHeight);
     parameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Depth_Subrect_Base_X, &frame.DepthSubrectBaseX);
@@ -179,7 +177,6 @@ ShaderPass_Dx12 MakeDlssNrPass(DlssNr_Dx12& shader, ID3D12Device* device, ID3D12
                 shader.SetBufferState(commandList, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             restore.Read(depth, states.depth);
             restore.Read(motion, states.motion);
-            restore.Read(exposure, states.exposure);
 
             const bool result = shader.Dispatch(commandList, input, depth, motion, output, frame, timingQueue);
             if (beforeUpscale)

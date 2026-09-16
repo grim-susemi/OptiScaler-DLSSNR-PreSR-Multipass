@@ -45,7 +45,7 @@ struct ModelStateDx12
 
     // Frame hold (design/frame-hold.md): a persistent copy of the output taken on hold-on and restored
     // over the live output before the encode reads it while held, so a setting change re-renders the
-    // same frame. heldWhitePoint is the snapshot used while held -- measurement is suspended.
+    // same frame. heldWhitePoint preserves the encode scale for the comparison.
     ID3D12Resource* heldColor = nullptr;
     bool heldActive = false;
     unsigned int heldWidth = 0;
@@ -55,28 +55,6 @@ struct ModelStateDx12
 
     unsigned int workWidth = 0;
     unsigned int workHeight = 0;
-
-    // The exposure readback ring contains the game's own exposure sample in texel zero.
-    ID3D12Resource* meter = nullptr;
-    ID3D12Resource* meterReadback[4] = {};
-
-    // Validity travels with the readback slot: an unbound exposure slot contains fallback image data.
-    bool meterExposureValid[4] = {};
-    unsigned long long meterFrames = 0;
-
-    // Only the setting off/on edge invalidates the held exposure; missing textures do not.
-    bool exposureSettingWasOn = false;
-
-    // The game's exposure, as last read back, and the pre-exposure that goes with it. Held rather
-    // than defaulted: the texture comes and goes between frames and a fallback to 1.0 on the gaps
-    // would be a flicker source.
-    float gameExposure = 0.0f;
-    float gamePreExposure = 1.0f;
-
-    // Track current and historical exposure availability separately for status reporting.
-    bool exposureOfferedNow = false;
-    bool exposureEverOffered = false;
-    unsigned long long exposureFrames = 0;
 
     // Cloned unconditionally when running at present, and only for typeless formats otherwise.
     ID3D12Resource* depthClone = nullptr;

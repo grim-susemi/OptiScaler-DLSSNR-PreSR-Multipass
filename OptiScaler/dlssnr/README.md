@@ -25,18 +25,16 @@ Paths are relative to `OptiScaler/dlssnr` unless prefixed with `shaders/`, which
 | --- | --- |
 | `DlssNr_Pipeline_Dx12.*`, `DlssNrPipeline_Vk.h` | Upscaler adapters |
 | `DlssNrFeature_Vk*`, `DlssNrFinished_Vk*` | Native Vulkan model/resources/presentation |
-| `DlssNr_Exposure*` | Discovery, readback and calibration |
 | `DlssNr_Menu*`, `DlssNr_PipelineUi.h` | Controls and chart |
 | `shaders/dlssnr/DlssNr_Dx12_{Run,Encode,Evaluate}*` | Frame processing and composition |
 | `shaders/dlssnr/DlssNr_Dx12_{Models,Resources,State,ModelState}*` | Model/resource ownership |
 | `shaders/dlssnr/DlssNr_Dx12_{DeferredSr,Enlarge}*`, `shaders/dlssnr/DlssNr_Upscaler_Dx12*` | Private upscaling |
 | `shaders/dlssnr/DlssNr_Dx12_{Late,FinishedQueue,FinishedCompose}*` | Capture, submission and presentation |
-| `shaders/dlssnr/DlssNr_Dx12_{Exposure,Hold}*` | Exposure and held inputs |
+| `shaders/dlssnr/DlssNr_Dx12_Hold*` | Held inputs |
 | `shaders/dlssnr/DlssNr_Common.h`, `shaders/dlssnr/precompile/*.hlsl` | Shared codec contract and shaders |
 
 D3D12 completion markers protect retirement; CPU frame counts only pair logical frames. Replaced owners stay registered until recordings and GPU work finish. Unresolved teardown work remains alive for process exit. Vulkan drains before resource replacement and separates creation/evaluation with events. See [GPU lifetime](../../docs/NR-GPU-RETIREMENT.md).
 
-The exposure scanner accepts one device until safe shutdown; per-feature ownership does not imply unrestricted multi-device NGX support.
 
 ## Validation
 

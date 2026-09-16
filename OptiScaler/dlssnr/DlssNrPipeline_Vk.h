@@ -71,7 +71,6 @@ inline DlssNrFrameInfo_Vk FrameInfo(NVSDK_NGX_Parameter* parameters, bool before
     frame.BeforeUpscale = beforeUpscale;
     parameters->Get(NVSDK_NGX_Parameter_MV_Scale_X, &frame.MvScaleX);
     parameters->Get(NVSDK_NGX_Parameter_MV_Scale_Y, &frame.MvScaleY);
-    parameters->Get(NVSDK_NGX_Parameter_ExposureTexture, &frame.ExposureTexture);
     parameters->Get(NVSDK_NGX_Parameter_DLSS_Pre_Exposure, &frame.PreExposure);
     parameters->Get(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Width, &frame.RenderSubrectWidth);
     parameters->Get(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Height, &frame.RenderSubrectHeight);

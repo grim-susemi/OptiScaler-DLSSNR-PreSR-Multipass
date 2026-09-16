@@ -6,7 +6,7 @@ Incorporates [y4my4my4m's commit 7b7220bb](https://github.com/y4my4my4m/OptiScal
 
 Passes own separate features/history, ping-pong outputs and compose once. A GPU event separates creation from evaluation. Profiles, resolution, filters and skin controls share D3D12 behaviour; Vulkan-to-D3D12 bridges run D3D12 NR only.
 
-Native Vulkan supports exposure readback and [finished-picture NR](NR-FINISHED-BRIDGES.md). Exposure scanning and private-upscaler composition require D3D12. Enable NR before device/swapchain creation to prepare extensions/transfer usage; late enabling may require restart. Resources allocate lazily.
+Native Vulkan supports [finished-picture NR](NR-FINISHED-BRIDGES.md). Private-upscaler composition requires D3D12. Enable NR before device/swapchain creation to prepare extensions/transfer usage; late enabling may require restart. Resources allocate lazily.
 
 ```ini
 [Upscalers]

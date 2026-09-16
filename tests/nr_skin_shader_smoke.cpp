@@ -92,7 +92,7 @@ int wmain(int argc, wchar_t** argv) try {
     const std::array<Pixel,2> carrierEdit {{{1.0f,0.50f,0.70f,0.25f}, {0.20f,0.25f,0.40f,0.75f}}};
     ctx->UpdateSubresource(original.Get(),0,nullptr,carrierBase.data(),sizeof(carrierBase),0);
     ctx->UpdateSubresource(model.Get(),0,nullptr,carrierEdit.data(),sizeof(carrierEdit),0);
-    settings.Mode=DlssNrMode_EncodeResidual; settings.ExposurePreMul=2.0f;
+    settings.Mode=DlssNrMode_EncodeResidual; settings.ResidualScale=2.0f;
     auto carrier=run();
     expect(carrier[0].r<0.5f && carrier[0].g>0.5f && carrier[1].g<0.5f,
            "Signed residual lost shadow/brightening information");
@@ -194,9 +194,6 @@ int wmain(int argc, wchar_t** argv) try {
     expect(std::abs(velocity.r-edited[1].r*2)<.0001f && std::abs(velocity.g-edited[1].g*3)<.0001f,
            "Private motion active region or pixel scale");
     std::puts("PASS: DLSS proxy carrier, matched reconstruction, neutral identity, depth/motion regions and scale");
-    settings = {}; settings.Mode = DlssNrMode_Meter; settings.Width = 2; settings.Height = 1;
-    result = run();
-    expect(result[0].r == base[0].r && result[1].r == 0, "Meter exposure or unused texels changed");
     if (argc == 3)
     {
         ComPtr<ID3DBlob> baselineCode;
@@ -204,7 +201,7 @@ int wmain(int argc, wchar_t** argv) try {
         ComPtr<ID3D11ComputeShader> baseline;
         check(device->CreateComputeShader(baselineCode->GetBufferPointer(), baselineCode->GetBufferSize(), nullptr,
                                           &baseline));
-        for (unsigned mode : { DlssNrMode_Encode, DlssNrMode_Resolve, DlssNrMode_Downsample, DlssNrMode_Meter,
+        for (unsigned mode : { DlssNrMode_Encode, DlssNrMode_Resolve, DlssNrMode_Downsample,
                                DlssNrMode_EncodeResidual, DlssNrMode_ApplyResidual, DlssNrMode_UnitExposure,
                                DlssNrMode_ClampProxy, DlssNrMode_EncodeProxyResidual, DlssNrMode_ResizePrivateGuides })
             for (unsigned variant = 0; variant < 96; ++variant)
@@ -218,8 +215,8 @@ int wmain(int argc, wchar_t** argv) try {
                 settings.DebugView = (variant / 2) % 4; settings.DebugScale = 1;
                 settings.CompareMode = (variant / 4) % 3; settings.CompareSplit = .5f;
                 settings.CompareZoom = variant % 2 + 1; settings.CompareSwap = (variant / 7) % 2;
-                settings.MaxRatio = variant % 4 + 1; settings.ExposurePreMul = 1;
-                settings.UseGameExposure = variant % 2; settings.GuideWidth = settings.GuideHeight = 1;
+                settings.MaxRatio = variant % 4 + 1; settings.ResidualScale = 1;
+                settings.GuideWidth = settings.GuideHeight = 1;
                 settings.SkinProtection = variant % 2;
                 settings.SkinDetail = settings.SkinColour = settings.EnvironmentDetail = settings.EnvironmentColour = .5f;
                 if (mode == DlssNrMode_ResizePrivateGuides)
@@ -231,12 +228,11 @@ int wmain(int argc, wchar_t** argv) try {
                 const auto previous = run();
                 ctx->CSSetShader(productionShader.Get(), nullptr, 0);
                 const auto current = run();
-                // Only unused meter texels intentionally differ; every consumed value must match exactly.
-                const unsigned pixels = mode == DlssNrMode_Meter ? 1 : settings.Width;
+                const unsigned pixels = settings.Width;
                 expect(std::memcmp(previous.data(), current.data(), pixels * sizeof(Pixel)) == 0,
                        "A consumed shader output changed relative to the baseline");
             }
-        std::puts("PASS: 960 production/baseline dispatches match bit-for-bit for all consumed outputs");
+        std::puts("PASS: 864 production/baseline dispatches match bit-for-bit for all consumed outputs");
     }
     return 0;
 } catch (const std::exception& e) { std::fprintf(stderr,"FAIL: %s\n",e.what()); return 1; }

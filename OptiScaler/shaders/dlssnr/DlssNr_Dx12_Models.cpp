@@ -101,24 +101,6 @@ bool DlssNr_Dx12::State::PrepareRunModels(ID3D12GraphicsCommandList* cmdList, ID
     if (workScale > 1.0f && nr.outputNative == nullptr)
         nr.outputNative = CreateScratch(device, desc.Format, width, height);
 
-    if (nr.meter == nullptr)
-    {
-        nr.meter = CreateScratch(device, DXGI_FORMAT_R32_FLOAT, kDlssNrMeterGrid, kDlssNrMeterGrid);
-
-        for (auto& rb : nr.meterReadback)
-        {
-            if (!DlssNr::CreateReadbackBuffer(device, kMeterBytes, &rb))
-            {
-                rb = nullptr;
-                LOG_WARN("DLSS-NR: the white point meter could not allocate its readback; falling back "
-                         "to the paper white slider");
-            }
-        }
-
-        if (nr.meter != nullptr)
-            LOG_INFO("DLSS-NR: white point meter up, {}x{} tiles", kDlssNrMeterGrid, kDlssNrMeterGrid);
-    }
-
     if (!nr.output || !nr.colorCopy || !nr.hdrCopy)
     {
         nr.failed = true;

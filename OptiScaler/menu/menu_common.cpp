@@ -4,7 +4,6 @@
 #if defined(OPTISCALER_RTX40_MFG)
 #include <framegen/dlssg/MfgUnlock.h>
 #endif
-#include <dlssnr/DlssNr_ExposureScan.h>
 
 #include <algorithm>
 #include <cfloat>
@@ -1635,14 +1634,8 @@ void MenuCommon::BeginMenuFrameIfNeeded(RenderMenuContext& ctx)
     auto& newFrame = ctx.newFrame;
 
     // New frame check
-    // The lamp is drawn while the menu is closed, which is the whole point of it. Tied to its own
-    // setting and nothing else: an overlay that appears because a scan is running, rather than
-    // because someone asked for it, is an overlay nobody asked for.
-    const bool scanIndicator = config->DlssNrScanMeter.value_or_default() &&
-                               DlssNr::ExposureScan::Scanning();
-
     if ((!config->DisableSplash.value_or_default() && now > splashStart && now < splashLimit) ||
-        config->ShowFps.value_or_default() || _isVisible || ImGui::notifications.size() > 0 || scanIndicator ||
+        config->ShowFps.value_or_default() || _isVisible || ImGui::notifications.size() > 0 ||
         (config->DlssNrCompare.value_or_default() != 0 && config->DlssNrCompareTags.value_or_default()))
     {
         if (!_isUWP)
@@ -7793,7 +7786,6 @@ bool MenuCommon::RenderMenu()
     RenderNotifications(ctx);
     UpdateFrameTimeAverages(ctx);
     RenderPerformanceOverlay(ctx);
-    DlssNr::RenderExposureScanIndicator(ctx.config->FpsOverlayAlpha.value_or_default());
 
     // 4) Draw the full settings menu last so popups and child windows keep their existing behavior.
     RenderMainMenuWindow(ctx);

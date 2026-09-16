@@ -361,9 +361,6 @@ bool DlssNr_Dx12::Dispatch(ID3D12GraphicsCommandList* cmd, ID3D12Resource* colou
         _state->Barrier(cmd, colour, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         _state->Barrier(cmd, output, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
-    _state->nr.exposureOfferedNow = info.ExposureTexture != nullptr;
-    _state->nr.exposureEverOffered |= _state->nr.exposureOfferedNow;
-    ++_state->nr.exposureFrames;
     const auto before = _state->nr.successfulDispatches;
     _state->Run(cmd, output, depth, motion, output, info, queue);
     return _state->nr.successfulDispatches != before;

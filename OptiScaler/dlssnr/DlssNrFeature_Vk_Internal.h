@@ -76,35 +76,7 @@ struct VkState
     unsigned long long timedFrames = 0;
     std::optional<double> lastGpuTime;
 
-    // Whether the game hands over an exposure texture, and what it said when it did.
-    bool exposureOffered = false;
-
-    // The game's own exposure, read off its 1x1 texture, and the scale it multiplied its buffer by.
-    //
-    // gameExposure holds its last good value rather than resetting when a frame arrives without a
-    // texture: GTA V dropped it three times in one session on the D3D12 path, and falling back to a
-    // default on those frames is a flicker, not a fallback.
-    float gameExposure = 0.0f;
-    float gamePreExposure = 1.0f;
-
-    // The exposure's courier: an 8x8 R32_FLOAT image the meter writes, and a ring of host-visible
-    // buffers it is copied into. Only texel (0,0) is ever read -- the rest of the grid belongs to the
-    // frame-statistics meter that was removed from the shared shader, and 8x8 is here only so that a
-    // single 8x8 thread group lands entirely inside the image.
-    ImageVk meter;
-    VkBuffer meterReadback[4] = {};
-    VkDeviceMemory meterReadbackMemory[4] = {};
-    void* meterMapped[4] = {};
-    unsigned long long meterFrames = 0;
 };
-
-// The grid the meter writes, and the size of one readback. 8 * 8 * sizeof(float).
-constexpr uint32_t kMeterSide = 8;
-constexpr VkDeviceSize kMeterBytes = kMeterSide * kMeterSide * sizeof(float);
-
-// Four, so the slot being read is four frames behind the slot being written and the read never waits
-// on the GPU. Same depth as the D3D12 meter's ring, for the same reason.
-constexpr unsigned long long kMeterSlots = 4;
 
 // Four frames of pairs. Three would do, four keeps the modulo cheap and the slot being written well
 // clear of the slot being read.
@@ -116,8 +88,6 @@ struct ModelVk::Impl
     bool reported = false;
     bool warnedVkSuper = false;
     bool saidEncoding = false;
-    float loggedExposure = -1.0f;
-    bool saidExposure = false;
     bool warnedDeferred = false;
     std::mutex mutex;
     uint64_t retryGeneration = ReadControlRequests().retryGeneration;
@@ -130,8 +100,6 @@ struct ModelVk::Impl
 
     void Fail(const char* why);
     bool CreateImage(ImageVk& img, uint32_t width, uint32_t height, VkFormat format);
-    bool CreateMeterReadback();
-    void DestroyMeterReadback();
     void Transition(VkCommandBuffer cmd, ImageVk& img, VkImageLayout to);
     void TransitionForeign(VkCommandBuffer cmd, VkImage image, VkImageSubresourceRange range, VkImageLayout from,
                            VkImageLayout to);

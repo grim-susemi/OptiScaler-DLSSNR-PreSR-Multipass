@@ -17,7 +17,6 @@
 #include <dlssnr/DlssNr_PipelineCapture.h>
 #include <dlssnr/DlssNr_Proxy.h>
 #include <dlssnr/DlssNr_GpuLifetime.h>
-#include <dlssnr/DlssNr_ExposureScan.h>
 
 #include "DlssNr_Dx12.h"
 #include "DlssNr_ActiveColor.h"
@@ -137,21 +136,6 @@ struct DlssNr_Dx12::State
 
     void ReleaseSurfacesIfFormatChanged(DXGI_FORMAT needed);
     void ReleaseSupersamplers();
-
-    // The meter's grid is R32_FLOAT, which makes a row exactly 64 * 4 = 256 bytes -- the alignment a
-    // texture-to-buffer copy demands, met without padding, so the readback is a flat array of floats.
-    static constexpr unsigned int kMeterRowBytes = kDlssNrMeterGrid * sizeof(float);
-    static constexpr unsigned int kMeterBytes = kMeterRowBytes * kDlssNrMeterGrid;
-
-    void CopyMeterToReadback(ID3D12GraphicsCommandList* cmdList);
-
-    void ConsumeMeterReadback();
-
-    // Invalidate pending and held samples when the exposure source changes.
-    void InvalidateExposureMeter();
-
-    // Resolve the encode divisor from game exposure or the configured manual fallback.
-    float ResolveWhitePoint(const Config& cfg, bool isHdrBuffer);
 
     ID3D12Resource* CreateScratch(ID3D12Device* device, DXGI_FORMAT format, unsigned int width, unsigned int height);
 
@@ -371,9 +355,7 @@ struct DlssNr_Dx12::State
         const DlssNrFrameInfo& frame;
         float workScale;
         bool targetSupportsUav;
-        float whitePoint = 1.0f, exposurePreMul = 0.0f;
-        unsigned int useGameExposure = 0;
-        ID3D12Resource* exposureTex = nullptr;
+        float whitePoint = 1.0f;
         ID3D12Resource* modelInput = nullptr;
     };
     void EncodeInput(EncodeContext& context);

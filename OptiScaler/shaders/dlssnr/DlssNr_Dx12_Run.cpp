@@ -216,11 +216,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     EncodeContext encoded { cmdList, device, target, targetState, frame, workScale, targetSupportsUav };
     EncodeInput(encoded);
     targetState = encoded.targetState;
-    auto* exposureTex = encoded.exposureTex;
     auto* modelInput = encoded.modelInput;
-
-    // Read the exposure scan's candidates on the pass's own command list, once a frame.
-    DlssNr::ExposureScan::Tick(device, cmdList, frame.SubmissionEpoch);
 
     ID3D12Resource* depthIn = ReadableGuide(device, cmdList, depth, &nr.depthClone);
     ID3D12Resource* motionIn = ReadableGuide(device, cmdList, motion, &nr.motionClone);
@@ -416,7 +412,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         }
 
         const bool resolved = enlargementReady && shader.DispatchPass(cmdList, resolveParams, resolveProxy, resolveAnswer,
-                                                  resolveOriginal, motionIn, exposureTex, resolveTarget, nullptr);
+                                                  resolveOriginal, motionIn, nullptr, resolveTarget, nullptr);
         compositionSucceeded = resolved;
 
         if (resolved && !targetSupportsUav)

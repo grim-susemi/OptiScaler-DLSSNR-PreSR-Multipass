@@ -201,21 +201,6 @@ auto DlssNr_Dx12::State::ReleaseResources() -> void
     ParkNrResource(nr.heldColor);
     nr.heldActive = false;
 
-    ParkNrResource(nr.meter);
-
-    for (auto& rb : nr.meterReadback)
-        ParkNrResource(rb);
-
-    // The slots these flags describe have just been released, so nothing may vouch for what the next
-    // buffers happen to contain. gameExposure is deliberately NOT cleared here: a recreate is a
-    // transition within the same scene, and dropping to the slider for a few frames would be the
-    // flicker the held value exists to prevent. The user switching the option off is the case where
-    // the held value has to go, and that is handled at the edge in Dispatch.
-    for (bool& valid : nr.meterExposureValid)
-        valid = false;
-
-    nr.meterFrames = 0;
-
     ParkNrResource(nr.depthClone);
 
     ParkNrResource(nr.motionClone);

@@ -71,14 +71,9 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
         ~ReportStatus()
         {
             const auto& state = owner->state;
-            ExposureStatus exposure {};
-            exposure.seenFrames = state.frames;
-            exposure.offeredNow = exposure.everOffered = state.exposureOffered;
-            exposure.exposure = state.gameExposure;
-            exposure.preExposure = state.gamePreExposure;
             PublishStatus(owner, Backend::Vulkan,
                           { state.models[0].feature != nullptr && !state.failed, state.reason, state.lastGpuTime,
-                            state.frames, exposure });
+                            state.frames });
         }
     } report { this };
     const auto requests = ReadControlRequests();
@@ -103,54 +98,6 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     auto* colour = &colourResource;
     auto* depth = &depthResource;
     auto* motion = &motionResource;
-
-    // Game exposure is sampled in SHADER_READ_ONLY_OPTIMAL, matching the Vulkan input contract.
-    // Keep its layout unchanged and retain the last valid exposure if a sample is unusable.
-    auto* exposure = static_cast<NVSDK_NGX_Resource_VK*>(frame.ExposureTexture);
-    const float preExposure = frame.PreExposure;
-
-    if (!saidExposure)
-    {
-        saidExposure = true;
-        LOG_INFO("DLSS-NR Vulkan: exposure from the game: DLSS.Pre.Exposure {}, ExposureTexture {}",
-                 preExposure,
-                 exposure != nullptr ? "supplied" : "not supplied");
-    }
-
-    state.exposureOffered = exposure != nullptr;
-
-    if (std::isfinite(preExposure) && preExposure > 0.0f)
-        state.gamePreExposure = preExposure;
-
-    // Take the grid written four frames ago. Retired by now, so this reads mapped memory rather than
-    // waiting on the GPU -- which is the whole reason for the ring.
-    if (state.meterFrames >= kMeterSlots)
-    {
-        const void* mapped = state.meterMapped[state.meterFrames % kMeterSlots];
-
-        if (mapped != nullptr)
-        {
-            float measured = 0.0f;
-            std::memcpy(&measured, mapped, sizeof(float));
-
-            // Believed only if it could be an exposure. A texel read through a layout the game did
-            // not leave it in, or a slot the game stopped filling, fails here and the last good
-            // value stands.
-            if (std::isfinite(measured) && measured > 0.0f)
-                state.gameExposure = measured;
-        }
-    }
-
-    // Said when it moves by more than a fiftieth, not every frame. Enough to see in a log that the
-    // number is the game's and that it tracks the scene, without a line per frame.
-
-    if (state.gameExposure > 1e-6f &&
-        std::abs(loggedExposure - state.gameExposure) > std::max(0.02f * state.gameExposure, 1e-5f))
-    {
-        loggedExposure = state.gameExposure;
-        LOG_INFO("DLSS-NR Vulkan: the game's exposure is {}, pre-exposure {}, so white point {}",
-                 state.gameExposure, state.gamePreExposure, state.gamePreExposure / state.gameExposure);
-    }
 
     if (colour->Resource.ImageViewInfo.ImageView == VK_NULL_HANDLE ||
         depth->Resource.ImageViewInfo.ImageView == VK_NULL_HANDLE ||
@@ -227,14 +174,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     // and encoding an already tone-mapped frame a second time looks washed out and banded.
     const bool linearHdr = gameSaysHdr && FormatCanHoldLinearHdr(colour->Resource.ImageViewInfo.Format);
 
-    // Undo game pre-exposure/exposure with a bounded trim. Preserve the manual setting for switching back.
     float whitePoint = cfg.DlssNrWhitePointScale.value_or_default();
-
-    if (cfg.DlssNrWhitePointSource.value_or_default() == 1 && state.gameExposure > 1e-6f)
-    {
-        const float trim = std::clamp(cfg.DlssNrWhitePointTrim.value_or_default(), 0.25f, 4.0f);
-        whitePoint = std::clamp(state.gamePreExposure / state.gameExposure * trim, 0.01f, 4096.0f);
-    }
 
     if (!saidEncoding)
     {
@@ -348,63 +288,6 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
         }
 
         modelInput = &state.proxySmall;
-    }
-
-    // -----------------------------------------------------------------------------------------
-    // The meter: the game's 1x1 exposure -> texel (0,0) of the grid -> a buffer the CPU can read
-    // -----------------------------------------------------------------------------------------
-
-    // Use the otherwise unused motion binding for exposure; bind it only for the selected exposure source.
-    if (cfg.DlssNrWhitePointSource.value_or_default() == 1 && exposure != nullptr &&
-        exposure->Type == NVSDK_NGX_RESOURCE_VK_TYPE_VK_IMAGEVIEW &&
-        exposure->Resource.ImageViewInfo.ImageView != VK_NULL_HANDLE && state.meter.Valid())
-    {
-        const unsigned long long slot = state.meterFrames % kMeterSlots;
-
-        if (state.meterReadback[slot] != VK_NULL_HANDLE)
-        {
-            DlssNrConstants meter = encode;
-            meter.Mode = DlssNrMode_Meter;
-            meter.Width = kMeterSide;
-            meter.Height = kMeterSide;
-
-            Transition(cmdBuffer, state.meter, VK_IMAGE_LAYOUT_GENERAL);
-
-            if (state.pass->Dispatch(cmdBuffer, meter, kMeterSide, kMeterSide, VK_NULL_HANDLE, VK_NULL_HANDLE,
-                                     VK_NULL_HANDLE, exposure->Resource.ImageViewInfo.ImageView, state.meter.info.ImageView,
-                                     VK_NULL_HANDLE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
-            {
-                Transition(cmdBuffer, state.meter, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-
-                VkBufferImageCopy region {};
-                region.bufferOffset = 0;
-                region.bufferRowLength = 0;
-                region.bufferImageHeight = 0;
-                region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
-                region.imageOffset = { 0, 0, 0 };
-                region.imageExtent = { kMeterSide, kMeterSide, 1 };
-
-                vkCmdCopyImageToBuffer(cmdBuffer, state.meter.info.Image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                       state.meterReadback[slot], 1, &region);
-
-                // The copy has to be visible to a host read, and only the host will read it.
-                VkBufferMemoryBarrier toHost {};
-                toHost.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-                toHost.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                toHost.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
-                toHost.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                toHost.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                toHost.buffer = state.meterReadback[slot];
-                toHost.offset = 0;
-                toHost.size = kMeterBytes;
-
-                vkCmdPipelineBarrier(cmdBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 0,
-                                     nullptr, 1, &toHost, 0, nullptr);
-
-                state.meterFrames++;
-            }
-        }
     }
 
     // -----------------------------------------------------------------------------------------

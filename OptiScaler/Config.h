@@ -347,23 +347,6 @@ class Config
     // Mode 2 requires post-upscale processing through DX12 (including finished-picture NR).
     CustomOptional<uint32_t> DlssNrTransfer { 1 };
 
-    // Measure the white point from the frame instead of taking it from the slider. On a frame the
-    // game already tone mapped there is nothing to measure and this has no effect.
-    //
-    // Off by default, because it is not finished. The pass writes its result back into the same buffer
-    // the meter reads, so with the pass running the meter is partly measuring its own output and the
-    // two chase each other: Enshrouded, one session, 1545 samples spanning 0.01 to 97.9 with 57 jumps
-    // beyond 1.5x in a single frame. Measured in the same spot seconds apart, 41.31 with the pass off
-    // against 0.46 with it on. That is visible as the picture pumping and occasionally flickering.
-    //
-    // The slider is the supported control until the loop is broken. This stays as an opt-in so the
-    // behaviour can still be looked at.
-
-
-    // Take the white point from the game's own exposure texture instead of measuring or guessing.
-    // Off by default until it has been seen to work in more than one game.
-    CustomOptional<bool> DlssNrWhitePointFromExposure { true };
-
     // 0 off, 1 the picture the model was shown, 2 its raw answer, 3 what it changed, amplified.
     CustomOptional<uint32_t> DlssNrDebugView { 0 };
 
@@ -398,89 +381,6 @@ class Config
     // the downscaler that averages its answer back to native. Independent of OutputScalingDownscaler
     // so NR and Output Scaling can run different filters at once. Lanczos3 is the sharp default.
     CustomOptional<Scaler> DlssNrScalingDownscaler { Scaler::Lanczos3 };
-
-    // Look for the exposure the game computed but never handed to the upscaler.
-    //
-    // Off by default, and it has to be. Reading a resource the game owns means assuming what state
-    // it is in, and unlike depth and motion vectors -- where NGX documents the contract -- a buffer
-    // found by its shape comes with no promise at all. UNORDERED_ACCESS is the reasonable
-    // assumption, since every candidate got here by having a UAV made on it, but it is an
-    // assumption, and nobody who has not asked for the scan should be carrying that risk.
-    //
-    // It decides nothing either way. It watches and it reports, because the last two times a number
-    // was inferred here it went straight into the interface and was wrong.
-    CustomOptional<bool> DlssNrScanExposure { false };
-
-    // Anchoring the scan: the white point that looked right, and the scan's value at that moment.
-    //
-    // The absolute white point cannot be derived from a buffer whose units are unknown. What CAN be
-    // derived is every value after the first: if the scan's number halves, the scene got twice as
-    // bright, and the white point follows -- whatever the number actually means, because only the
-    // ratio is used and the units cancel.
-    //
-    // So the user sets it once, in one lighting condition, and presses a button. After that it stays
-    // correct through every cave and every noon without being touched again. Which is also the shape
-    // that makes per-game profiles work: one person anchors a game, everybody else gets the number.
-    //
-    // Zero means not anchored, and then nothing happens at all.
-    // A lamp in the corner showing what the scan currently thinks the light is doing: red for dark,
-    // green for full light, and the shades between. Off by default; it is for watching the thing
-    // work, not for playing with.
-    // Where the white point comes from. One control, because there is one answer.
-    //
-    //   0  the paper white slider, and nothing else
-    //   1  the exposure the game hands the upscaler
-    //   2  a buffer the scan found, anchored to a white point the user chose once
-    //
-    // This replaces two independent checkboxes that could both be on. They were made exclusive by
-    // greying, which deadlocked -- each disabled the other, so once both were set the only way out
-    // was a button the notice never mentioned -- and then by clearing, which silently undid a
-    // setting the user had made. Both were attempts to stop an illegal state being REACHED. A single
-    // choice cannot reach it: there is nothing to keep consistent, because there is only one value.
-    CustomOptional<uint32_t> DlssNrWhitePointSource { 1 };
-
-    CustomOptional<bool> DlssNrScanMeter { false };
-
-    CustomOptional<float> DlssNrScanAnchorValue { 0.0f };       // legacy single anchor, migrated then unused
-    CustomOptional<float> DlssNrScanAnchorWhitePoint { 0.0f };  // legacy single anchor, migrated then unused
-
-    // The multi-point anchor table, serialised as "scan:white;scan:white;..." ascending. See
-    // dlssnr/design/multi-point-anchoring.md. Replaces the single pair above; a pre-existing single
-    // anchor is migrated into a one-row table on first load.
-    CustomOptional<std::string> DlssNrScanAnchors { std::string() };
-
-    // Whether the scan's number rises or falls with the light.
-    //
-    // A found buffer carries no contract. Most engines store an exposure -- a multiplier that goes
-    // DOWN as the scene gets brighter -- but some store its reciprocal, and nothing in the buffer
-    // says which. Rather than guess and be silently wrong in half the games, this is one click: if
-    // the picture moves the wrong way, flip it.
-    CustomOptional<bool> DlssNrScanInverted { false };
-
-
-
-
-
-
-
-    // The trim on an exposure-derived white point, kept apart from the manual divisor on purpose.
-    //
-    // These are two different quantities that happened to share one slider: the manual path wants an
-    // absolute divisor on an open-ended linear buffer, which in Nioh 3 is about 240, and the exposure
-    // path wants a multiplier on a number the game already supplied, where anything far from 1 is
-    // a sign the read is wrong rather than a preference. Sharing one stored value meant touching the
-    // slider in one mode silently destroyed the number found in the other.
-    //
-    // 1.0 is the identity: take the game's exposure exactly as given. That is the "safe value", and
-    // it is safe by construction rather than by being written down somewhere.
-    CustomOptional<float> DlssNrWhitePointTrim { 1.0f };
-
-    // The scan's trim, kept apart from the exposure texture's.
-    //
-    // They are trims on different things and a value found against one is meaningless against the
-    // other. Sharing one slider meant switching source silently carried a number across, so a
-    // picture that had been tuned came back wrong for a reason nothing on screen explained.
-    CustomOptional<float> DlssNrScanTrim { 1.0f };
 
     // How many sequential model layers to run between one encode and one final composition. Each extra
     // layer consumes the preceding model output and owns a persistent feature/history. The implementation

@@ -137,7 +137,7 @@ inline void Draw(const View& view, Section& selected)
     const auto connect = [&](int from, int to) { edges.push_back({ from, to }); };
     const auto prepare = [&](int lane, int row)
     {
-        return add(lane, row, "Prepare NR input", "HDR / exposure / " + std::to_string(view.scalePercent) + "%",
+        return add(lane, row, "Prepare NR input", "HDR / paper white / " + std::to_string(view.scalePercent) + "%",
                    (int) Section::Input);
     };
     const auto model = [&](int lane, int row)

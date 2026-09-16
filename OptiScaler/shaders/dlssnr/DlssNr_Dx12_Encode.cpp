@@ -198,8 +198,7 @@ DlssNrConstants DlssNr_Dx12::State::MakeResolveConstants(const EncodeContext& co
     resolveParams.SkinProtection = cfg.DlssNrSkinProtection.value_or_default();
     resolveParams.ShowSkinMask = cfg.DlssNrShowSkinMask.value_or_default();
     resolveParams.SkinDetail = strength(cfg.DlssNrSkinDetail.value_or_default());
-    resolveParams.SkinColour =
-        cfg.DlssNrSkinToneEnabled.value_or_default() ? strength(cfg.DlssNrSkinColour.value_or_default()) : 0.0f;
+    resolveParams.SkinColour = strength(cfg.DlssNrSkinColour.value_or_default());
     resolveParams.EnvironmentDetail = strength(cfg.DlssNrEnvironmentDetail.value_or_default());
     resolveParams.EnvironmentColour = strength(cfg.DlssNrEnvironmentColour.value_or_default());
     resolveParams.ColourStrength = cfg.DlssNrColourStrength.value_or_default();

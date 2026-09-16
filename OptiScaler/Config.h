@@ -293,7 +293,6 @@ class Config
     CustomOptional<bool> DlssNrAutoMask { true };
     // Optional final-composition filter, not NVIDIA's semantic auto mask.
     CustomOptional<bool> DlssNrSkinProtection { false };
-    CustomOptional<bool> DlssNrSkinToneEnabled { true };
     CustomOptional<float> DlssNrSkinDetail { 1.0f };
     CustomOptional<float> DlssNrSkinColour { 1.0f };
     CustomOptional<float> DlssNrEnvironmentDetail { 1.0f };

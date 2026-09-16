@@ -364,7 +364,6 @@ bool Config::Reload(std::filesystem::path iniPath)
             DlssNrSkinStructure.set_from_config(readFloat("DlssNr", "SkinStructure"));
             DlssNrAutoMask.set_from_config(readBool("DlssNr", "AutoMask"));
             DlssNrSkinProtection.set_from_config(readBool("DlssNr", "SkinProtection"));
-            DlssNrSkinToneEnabled.set_from_config(readBool("DlssNr", "SkinToneEnabled"));
             DlssNrSkinDetail.set_from_config(readFloat("DlssNr", "SkinDetail"));
             DlssNrSkinColour.set_from_config(readFloat("DlssNr", "SkinColour"));
             DlssNrEnvironmentDetail.set_from_config(readFloat("DlssNr", "EnvironmentDetail"));
@@ -1256,7 +1255,7 @@ bool Config::SaveIni()
     ini.Delete("DlssNr", "Precision"); // Remove the obsolete backend selector from saved configurations.
     for (const char* key : { "ScanExposure", "ScanMeter", "ScanTrim", "ScanAnchorValue",
                              "ScanAnchorWhitePoint", "ScanAnchors", "ScanInverted",
-                             "WhitePointSource", "WhitePointFromExposure", "WhitePointTrim" })
+                             "WhitePointSource", "WhitePointFromExposure", "WhitePointTrim", "SkinToneEnabled" })
         ini.Delete("DlssNr", key);
     {
         auto toggle = Instance()->DlssNrToggleKey.value_for_config();
@@ -1306,7 +1305,6 @@ bool Config::SaveIni()
                  GetFloatValue(Instance()->DlssNrSkinStructure.value_for_config()).c_str());
     ini.SetValue("DlssNr", "AutoMask", GetBoolValue(Instance()->DlssNrAutoMask.value_for_config()).c_str());
     ini.SetValue("DlssNr", "SkinProtection", GetBoolValue(Instance()->DlssNrSkinProtection.value_for_config()).c_str());
-    ini.SetValue("DlssNr", "SkinToneEnabled", GetBoolValue(Instance()->DlssNrSkinToneEnabled.value_for_config()).c_str());
     ini.SetValue("DlssNr", "SkinDetail", GetFloatValue(Instance()->DlssNrSkinDetail.value_for_config()).c_str());
     ini.SetValue("DlssNr", "SkinColour", GetFloatValue(Instance()->DlssNrSkinColour.value_for_config()).c_str());
     ini.SetValue("DlssNr", "EnvironmentDetail", GetFloatValue(Instance()->DlssNrEnvironmentDetail.value_for_config()).c_str());

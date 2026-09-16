@@ -48,10 +48,6 @@ void RenderBlend(Config* config)
         if (ImGui::Checkbox("Separate skin / environment controls", &filter))
             config->DlssNrSkinProtection = filter;
         ImGui::BeginDisabled(!filter);
-        bool tone = config->DlssNrSkinToneEnabled.value_or_default();
-        if (ImGui::Checkbox("Allow skin tone / colour changes", &tone))
-            config->DlssNrSkinToneEnabled = tone;
-        HelpMarker("Allow skin colour changes while retaining separate detail control.");
         const auto slider = [](const char* label, auto& option)
         {
             float v = option.value_or_default();
@@ -60,9 +56,7 @@ void RenderBlend(Config* config)
             HelpMarker("0 = unchanged. 1 = full effect.");
         };
         slider("Skin detail / lighting", config->DlssNrSkinDetail);
-        ImGui::BeginDisabled(!tone);
         slider("Skin colour", config->DlssNrSkinColour);
-        ImGui::EndDisabled();
         slider("Environment detail / lighting", config->DlssNrEnvironmentDetail);
         slider("Environment colour", config->DlssNrEnvironmentColour);
         bool preview = config->DlssNrShowSkinMask.value_or_default();

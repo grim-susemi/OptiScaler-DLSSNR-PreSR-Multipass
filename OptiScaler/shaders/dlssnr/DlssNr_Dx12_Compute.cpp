@@ -103,7 +103,11 @@ bool DlssNr_Dx12::DispatchCompute(ID3D12GraphicsCommandList* InCmdList, const Dl
         };
 
         for (uint32_t i = 0; i < kSrvCount; ++i)
-            CreateShaderResourceView(_device, srvs[i], currentHeap.GetSrvCPU(i));
+        {
+            // Copied depth guides already use an SRV format; translating it again produces a DSV format.
+            const bool translate = srvs[i]->GetDesc().Format != DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+            CreateShaderResourceView(_device, srvs[i], currentHeap.GetSrvCPU(i), DXGI_FORMAT_UNKNOWN, translate);
+        }
 
         ID3D12Resource* const uavs[kUavCount] = {
             OutTarget,

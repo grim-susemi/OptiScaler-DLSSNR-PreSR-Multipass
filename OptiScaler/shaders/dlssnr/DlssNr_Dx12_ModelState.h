@@ -60,28 +60,8 @@ struct ModelStateDx12
     ID3D12Resource* meter = nullptr;
     ID3D12Resource* meterReadback[4] = {};
 
-    // The calibration grid: what scale the game's buffer is on, measured from the untouched copy.
-    // Its own surface and ring rather than sharing the meter's, because the two run at different
-    // sizes -- the meter fetches one texel and this reads the whole frame.
-    ID3D12Resource* calib = nullptr;
-    ID3D12Resource* calibReadback[4] = {};
-    unsigned long long calibFrames = 0;
-
-    // The last few answers, so the menu can say how settled the number is. A suggestion taken during
-    // a fade or a loading screen is worth less than one taken while standing still, and the spread
-    // across recent frames is what tells them apart.
-    static constexpr unsigned int kCalibHistory = 32;
-    float calibHistory[kCalibHistory] = {};
-    unsigned int calibCount = 0;
-    float calibSuggestion = 0.0f;
-    float calibSteadiness = 0.0f;
-    bool calibUsable = false;
-    const char* calibWhy = "measuring...";
-    bool calibPassthrough = false;
-
     // Validity travels with the readback slot: an unbound exposure slot contains fallback image data.
     bool meterExposureValid[4] = {};
-    unsigned int meterSlot = 0;
     unsigned long long meterFrames = 0;
 
     // Only the setting off/on edge invalidates the held exposure; missing textures do not.
@@ -101,10 +81,6 @@ struct ModelStateDx12
     // Cloned unconditionally when running at present, and only for typeless formats otherwise.
     ID3D12Resource* depthClone = nullptr;
     ID3D12Resource* motionClone = nullptr;
-
-    // The constant-depth probe's surface. Separate from depthClone on purpose: it is defined by
-    // never having been written, and sharing a surface with a mode that writes would destroy that.
-    ID3D12Resource* depthConstant = nullptr;
 
     unsigned int width = 0;
     unsigned int height = 0;

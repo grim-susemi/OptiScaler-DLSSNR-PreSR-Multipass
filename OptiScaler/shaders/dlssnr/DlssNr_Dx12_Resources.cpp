@@ -17,8 +17,6 @@ auto DlssNr_Dx12::State::ReleaseSurfacesIfFormatChanged(DXGI_FORMAT needed) -> v
     LOG_INFO("DLSS-NR rebuilding surfaces: format {} -> {} (inject point changed)",
              (int) nr.output->GetDesc().Format, (int) needed);
 
-    ForgetCalibration();
-
     for (auto& model : nr.models)
         model.RetryAfterFailure();
     std::fill(std::begin(nr.passCreateFailed), std::end(nr.passCreateFailed), false);
@@ -170,6 +168,13 @@ auto DlssNr_Dx12::State::GetResource(NVSDK_NGX_Parameter* params, const char* a,
     return nullptr;
 }
 
+void DlssNr_Dx12::State::ReleaseSupersamplers()
+{
+    for (auto** scaler : { &nr.superUp, &nr.superDown })
+        if (auto* retired = std::exchange(*scaler, nullptr))
+            lifetime.Retire([retired] { delete retired; });
+}
+
 auto DlssNr_Dx12::State::ReleaseResources() -> void
 {
     std::lock_guard<std::recursive_mutex> nrLock(mutex);
@@ -189,9 +194,7 @@ auto DlssNr_Dx12::State::ReleaseResources() -> void
         ParkNrResource(*resource);
     nr.passScratchFailed = false;
 
-    for (auto** scaler : { &nr.superUp, &nr.superDown })
-        if (auto* retired = std::exchange(*scaler, nullptr))
-            lifetime.Retire([retired] { delete retired; });
+    ReleaseSupersamplers();
 
     ParkNrResource(nr.outputNative);
 
@@ -199,14 +202,6 @@ auto DlssNr_Dx12::State::ReleaseResources() -> void
     nr.heldActive = false;
 
     ParkNrResource(nr.meter);
-
-    ParkNrResource(nr.calib);
-
-    for (auto& r : nr.calibReadback)
-        ParkNrResource(r);
-
-    nr.calibFrames = 0;
-    ForgetCalibration();
 
     for (auto& rb : nr.meterReadback)
         ParkNrResource(rb);

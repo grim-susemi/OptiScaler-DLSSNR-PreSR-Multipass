@@ -25,16 +25,6 @@ void DlssNr_Dx12::State::EncodeInput(EncodeContext& context)
         Barrier(cmdList, target, targetState, to);
         targetState = to;
     };
-    // Fetch the game's exposure, where the game supplies one and the user asked for it.
-    //
-    // This used to measure the white point off the frame as well, over a 64x64 grid of tile
-    // luminances. That is gone: the pass writes the frame it was measuring, so the divisor chased its
-    // own output -- one Enshrouded session walked it from 0.010 to 97.910, and toggling NR at a fixed
-    // spot read 41.31 off against 0.46 on. What remains dispatches a single thread to copy the game's
-    // 1x1 exposure texture into tile 0. That is a courier, not a measurement, and cannot feed back.
-    // Gated on the source the menu actually writes. This read the retired WhitePointFromExposure
-    // flag while consumption keyed on WhitePointSource == 1, so choosing "the game's own exposure"
-    // never dispatched the meter and the white point silently fell back to the slider.
     const bool exposureSettingOn = cfg.DlssNrWhitePointSource.value_or_default() == 1;
 
     // Nothing held from before the option was switched off may survive switching it back on. See
@@ -54,8 +44,7 @@ void DlssNr_Dx12::State::EncodeInput(EncodeContext& context)
         DlssNrConstants meterParams {};
         meterParams.Mode = DlssNrMode_Meter;
 
-        // One pixel. Only tile (0,0) is read back, and the tile-mean branch below it in the shader is
-        // dead code the dispatch simply never reaches.
+        // Only the game-exposure texel is read back.
         meterParams.Width = 1;
         meterParams.Height = 1;
 
@@ -169,8 +158,6 @@ void DlssNr_Dx12::State::EncodeInput(EncodeContext& context)
     encodeParams.UseGameExposure = useGameExposure;
     encodeParams.ExposurePreMul = exposurePreMul;
     encodeParams.ReversibleMode = cfg.DlssNrReversibleMode.value_or_default();
-    // Match only takes effect once a fit exists; until then the table is empty and the shader would
-    // read a curve of zeros, so it falls back to the plain proxy.
     encodeParams.Width = width;
     encodeParams.Height = height;
 
@@ -183,10 +170,6 @@ void DlssNr_Dx12::State::EncodeInput(EncodeContext& context)
     // The transitions double as the wait for the encode's writes.
     Barrier(cmdList, nr.colorCopy, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
             D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    // Measure the buffer's scale from the copy the encode just kept -- untouched, so there is no path
-    // (Calibration pass removed: it produced only a menu suggestion nothing consumed, at the cost
-    // of a 4096-thread dispatch, a readback and an nth_element every frame.)
-
     Barrier(cmdList, nr.hdrCopy, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
             D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
@@ -211,16 +194,7 @@ void DlssNr_Dx12::State::EncodeInput(EncodeContext& context)
             const Scaler nrScaler = cfg.DlssNrScalingDownscaler.value_or_default();
             if (nr.nrScaler != nrScaler)
             {
-                if (nr.superUp != nullptr)
-                {
-                    lifetime.Retire([up = nr.superUp] { delete up; });
-                    nr.superUp = nullptr;
-                }
-                if (nr.superDown != nullptr)
-                {
-                    lifetime.Retire([down = nr.superDown] { delete down; });
-                    nr.superDown = nullptr;
-                }
+                ReleaseSupersamplers();
                 nr.nrScaler = nrScaler;
             }
             if (nr.superUp == nullptr)

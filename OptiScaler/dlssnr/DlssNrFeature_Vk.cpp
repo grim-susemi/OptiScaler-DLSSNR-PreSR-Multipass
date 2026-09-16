@@ -251,8 +251,6 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     encode.GuideWidth = guideWidth;
     encode.GuideHeight = guideHeight;
 
-    const VkImageSubresourceRange colourRange = colour->Resource.ImageViewInfo.SubresourceRange;
-
     // Open the measurement. Reset immediately before writing: a query pool slot must be reset before
     // it is written again, and doing it here rather than at the end keeps the two in one place.
     const uint32_t timingSlot = (uint32_t) (state.timedFrames % kTimingSlots);

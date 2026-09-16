@@ -216,10 +216,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     EncodeContext encoded { cmdList, device, target, targetState, frame, workScale, targetSupportsUav };
     EncodeInput(encoded);
     targetState = encoded.targetState;
-    const auto whitePoint = encoded.whitePoint;
     auto* exposureTex = encoded.exposureTex;
-    const auto useGameExposure = encoded.useGameExposure;
-    const auto exposurePreMul = encoded.exposurePreMul;
     auto* modelInput = encoded.modelInput;
 
     // Read the exposure scan's candidates on the pass's own command list, once a frame.

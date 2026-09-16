@@ -25,16 +25,6 @@ void ApplyToStreamlinePicture(IDXGISwapChain* swapchain, ID3D12Resource* picture
 void ApplyToFinishedPictureDx11(IDXGISwapChain* swapchain);
 void FinishedPictureColorSpace(IDXGISwapChain* swapchain, DXGI_COLOR_SPACE_TYPE colorSpace);
 
-// Suggested exposure calibration and steadiness; the user chooses whether to apply it.
-struct CalibrationReading
-{
-    float suggestion = 0.0f;
-    float steadiness = 0.0f;
-    unsigned long long samples = 0;
-    bool usable = false;
-    const char* why = "";
-};
-CalibrationReading Calibration();
 std::string DeferredDlssStatus();
 void Shutdown();
 } // namespace DlssNr

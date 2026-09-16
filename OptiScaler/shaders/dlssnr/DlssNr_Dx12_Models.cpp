@@ -35,9 +35,6 @@ bool DlssNr_Dx12::State::PrepareRunModels(ID3D12GraphicsCommandList* cmdList, ID
         // resources away for it would mean a reallocation every time a slider moves.
         if (resolutionChanged || placementChanged)
         {
-            if (placementChanged)
-                ForgetCalibration();
-
             ParkNrResource(nr.output);
             ParkNrResource(nr.passScratch);
             ParkNrResource(nr.passClamp);

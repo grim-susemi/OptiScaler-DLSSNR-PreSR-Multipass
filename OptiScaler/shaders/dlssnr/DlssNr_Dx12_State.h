@@ -44,7 +44,6 @@
 
 using DlssNr::Profiles::PassSettings;
 
-using DlssNr::CalibrationReading;
 
 struct DlssNr_Dx12::State
 {
@@ -136,27 +135,15 @@ struct DlssNr_Dx12::State
 
     void ParkNrResource(ID3D12Resource*& resource);
 
-    // The inject point decides which buffer is being measured -- the upscaler's linear output or the
-    // finished frame in swapchain format -- so a reading taken before a change describes a different
-    // picture to one taken after. Everything else that depends on the format is invalidated here.
-    void ForgetCalibration();
-
     void ReleaseSurfacesIfFormatChanged(DXGI_FORMAT needed);
+    void ReleaseSupersamplers();
 
     // The meter's grid is R32_FLOAT, which makes a row exactly 64 * 4 = 256 bytes -- the alignment a
     // texture-to-buffer copy demands, met without padding, so the readback is a flat array of floats.
     static constexpr unsigned int kMeterRowBytes = kDlssNrMeterGrid * sizeof(float);
     static constexpr unsigned int kMeterBytes = kMeterRowBytes * kDlssNrMeterGrid;
 
-    // Records the copy of this frame's grid into whichever readback buffer is furthest from being read.
-    // Same shape as the meter's copy, against the calibration surface and its own ring.
-    void CopyCalibrationToReadback(ID3D12GraphicsCommandList* cmdList);
-
     void CopyMeterToReadback(ID3D12GraphicsCommandList* cmdList);
-    void CopyGridToReadback(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* grid, ID3D12Resource* readback);
-
-    // Calibration consumes the grid; the exposure meter consumes only texel zero.
-    void ConsumeCalibrationReadback();
 
     void ConsumeMeterReadback();
 
@@ -404,8 +391,6 @@ struct DlssNr_Dx12::State
     void EvaluateInternal(ID3D12GraphicsCommandList* cmdList, NVSDK_NGX_Parameter* params, bool beforeUpscale,
                           ID3D12CommandQueue* timingQueue, bool rayReconstruction, unsigned long long submissionEpoch,
                           bool interop);
-
-    DlssNr::CalibrationReading Calibration();
 
     void ReleaseResources();
 

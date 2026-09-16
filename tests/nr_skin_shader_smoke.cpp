@@ -204,7 +204,9 @@ int wmain(int argc, wchar_t** argv) try {
         ComPtr<ID3D11ComputeShader> baseline;
         check(device->CreateComputeShader(baselineCode->GetBufferPointer(), baselineCode->GetBufferSize(), nullptr,
                                           &baseline));
-        for (unsigned mode = 0; mode <= 10; ++mode)
+        for (unsigned mode : { DlssNrMode_Encode, DlssNrMode_Resolve, DlssNrMode_Downsample, DlssNrMode_Meter,
+                               DlssNrMode_EncodeResidual, DlssNrMode_ApplyResidual, DlssNrMode_UnitExposure,
+                               DlssNrMode_ClampProxy, DlssNrMode_EncodeProxyResidual, DlssNrMode_ResizePrivateGuides })
             for (unsigned variant = 0; variant < 96; ++variant)
             {
                 settings = {}; settings.Mode = mode; settings.Width = variant % 2 + 1; settings.Height = 1;
@@ -234,7 +236,7 @@ int wmain(int argc, wchar_t** argv) try {
                 expect(std::memcmp(previous.data(), current.data(), pixels * sizeof(Pixel)) == 0,
                        "A consumed shader output changed relative to the baseline");
             }
-        std::puts("PASS: 1,056 production/baseline dispatches match bit-for-bit for all consumed outputs");
+        std::puts("PASS: 960 production/baseline dispatches match bit-for-bit for all consumed outputs");
     }
     return 0;
 } catch (const std::exception& e) { std::fprintf(stderr,"FAIL: %s\n",e.what()); return 1; }

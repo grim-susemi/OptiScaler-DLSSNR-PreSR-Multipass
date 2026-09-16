@@ -553,12 +553,6 @@ void DlssNr_Dx12::ApplyFinishedDx11(IDXGISwapChain* swapchain)
 }
 std::string DlssNr_Dx12::FinishedStatus() { return _state->FinishedPictureStatus(); }
 std::string DlssNr_Dx12::DeferredStatus() { return _state->DeferredDlssStatus(); }
-DlssNr::CalibrationReading DlssNr_Dx12::CalibrationStatus()
-{
-    std::lock_guard lock(_state->mutex);
-    return _state->Calibration();
-}
-
 namespace DlssNr
 {
 void FinishedPictureResetCommandList(ID3D12CommandList* cmd)
@@ -620,11 +614,5 @@ std::string DeferredDlssStatus()
     std::lock_guard lock(nrOwnersMutex);
     return activeNrOwner ? activeNrOwner->DeferredStatus() : "not started";
 }
-CalibrationReading Calibration()
-{
-    std::lock_guard lock(nrOwnersMutex);
-    return activeNrOwner ? activeNrOwner->CalibrationStatus() : CalibrationReading {};
-}
-
 void Shutdown() { WaitForFinishedPicture(); }
 } // namespace DlssNr

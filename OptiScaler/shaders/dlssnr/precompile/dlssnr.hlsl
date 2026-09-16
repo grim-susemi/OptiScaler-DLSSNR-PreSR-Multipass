@@ -492,37 +492,6 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         return;
     }
 
-    // Calibration: sample peak luminance per tile from the untouched scene.
-    // The host takes a percentile across tiles to reduce the influence of isolated highlights.
-    if (gMode == 4)
-    {
-        uint fullW, fullH;
-        gSource.GetDimensions(fullW, fullH);
-
-        const uint tx0 = (uint) (((float) id.x * (float) fullW) / (float) gWidth);
-        const uint tx1 = (uint) (((float) (id.x + 1) * (float) fullW) / (float) gWidth);
-        const uint ty0 = (uint) (((float) id.y * (float) fullH) / (float) gHeight);
-        const uint ty1 = (uint) (((float) (id.y + 1) * (float) fullH) / (float) gHeight);
-
-        // Sample up to sixteen positions per axis to limit resolution-dependent undersampling.
-        const uint stepX = max((tx1 - tx0) / 16u, 1u);
-        const uint stepY = max((ty1 - ty0) / 16u, 1u);
-
-        float peak = 0.0;
-
-        for (uint ty = ty0; ty < max(ty1, ty0 + 1u); ty += stepY)
-        {
-            for (uint tx = tx0; tx < max(tx1, tx0 + 1u); tx += stepX)
-            {
-                const float3 c = max(gSource.Load(int3(min(tx, fullW - 1u), min(ty, fullH - 1u), 0)).rgb, 0.0);
-                peak = max(peak, dot(c, kLuma));
-            }
-        }
-
-        gTarget[id.xy] = float4(peak, 0.0, 0.0, 1.0);
-        return;
-    }
-
     if (gMode == 3)
     {
         // Both backends consume only the game-exposure sample at (0,0).

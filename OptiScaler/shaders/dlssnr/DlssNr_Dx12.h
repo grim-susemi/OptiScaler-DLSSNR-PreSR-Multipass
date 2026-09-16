@@ -14,7 +14,7 @@
 // Twelve-frame descriptor budget. Each multipass chain reuses two immutable clamp slots.
 #define DLSSNR_NUM_OF_HEAPS 96
 
-class DlssNr_Dx12 : public Shader_Dx12, public DlssNr_Common
+class DlssNr_Dx12 : public Shader_Dx12
 {
   private:
     struct State;
@@ -26,11 +26,13 @@ class DlssNr_Dx12 : public Shader_Dx12, public DlssNr_Common
 
     uint32_t _heapIndex = 0;
 
-    static constexpr uint32_t kSrvCount = 5;
+    static constexpr uint32_t kSrvCount = 4;
     static constexpr uint32_t kUavCount = 2;
 
     ID3D12PipelineState* _residualPipelineState = nullptr;
     ID3D12PipelineState* _finishedColorPipelineState = nullptr;
+
+    void RegisterOwner();
 
     // Caller holds both locks and supplies valid commands/source/target; NR shaders share the descriptor layout.
     bool DispatchCompute(ID3D12GraphicsCommandList* cmd, const DlssNrConstants& constants,

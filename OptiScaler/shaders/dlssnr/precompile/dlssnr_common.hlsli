@@ -60,9 +60,6 @@ Texture2D<float4>   gOriginal : register(t2);
 [[vk::binding(4, 0)]]
 #endif
 Texture2D<float4>   gMotion   : register(t3);
-#if defined(NR_RESIDUAL) && !defined(VK_MODE)
-Texture2D<float4>   gExposure : register(t4);
-#endif
 #ifdef VK_MODE
 [[vk::binding(5, 0)]]
 #endif

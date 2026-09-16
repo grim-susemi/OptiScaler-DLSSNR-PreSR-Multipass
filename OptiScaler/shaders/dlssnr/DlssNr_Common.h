@@ -27,8 +27,7 @@ struct DlssNrFrameInfo
     bool DepthInverted = false;
 
     // Game-reported motion scale; guides retain independent active regions.
-    float MvScaleX = 1.0f;
-    float MvScaleY = 1.0f;
+    float MvScaleX = 1.0f, MvScaleY = 1.0f;
 
     bool Reset = false;
 
@@ -51,18 +50,13 @@ struct DlssNrFrameInfo
     float PreExposure = 1.0f;
 
     // Active raster inside a potentially larger allocation; zero uses the resource dimensions.
-    unsigned int RenderSubrectWidth = 0;
-    unsigned int RenderSubrectHeight = 0;
-
-    unsigned int DepthSubrectBaseX = 0;
-    unsigned int DepthSubrectBaseY = 0;
-    unsigned int MotionSubrectBaseX = 0;
-    unsigned int MotionSubrectBaseY = 0;
+    unsigned int RenderSubrectWidth = 0, RenderSubrectHeight = 0;
+    unsigned int DepthSubrectBaseX = 0, DepthSubrectBaseY = 0;
+    unsigned int MotionSubrectBaseX = 0, MotionSubrectBaseY = 0;
 
     // Select render- or output-resolution motion regions from the game's feature flags.
     bool MotionVectorsLowResolution = false;
-    unsigned int OutputWidth = 0;
-    unsigned int OutputHeight = 0;
+    unsigned int OutputWidth = 0, OutputHeight = 0;
 };
 
 // Field order matches the HLSL cbuffers; DX12 constant buffers require 256-byte alignment.
@@ -71,30 +65,17 @@ struct alignas(256) DlssNrConstants
     uint32_t Mode;
     float WhitePoint;
 
-    uint32_t Width;
-    uint32_t Height;
-
-    float TransferStrength;
-    float ColourStrength;
-
+    uint32_t Width, Height;
+    float TransferStrength, ColourStrength;
     uint32_t DebugView;
-
     float MaxRatio;
-
     uint32_t Passthrough;
-
-    float MvScaleX;
-    float MvScaleY;
-
-    uint32_t GuideWidth;
-    uint32_t GuideHeight;
+    float MvScaleX, MvScaleY;
+    uint32_t GuideWidth, GuideHeight;
 
     // 0 off, 1 side by side, 2 wipe. CompareZoom: 1 fit, 2 fill/crop.
     uint32_t CompareMode;
-    float CompareSplit;
-
-    float CompareZoom;
-
+    float CompareSplit, CompareZoom;
     uint32_t CompareSwap;
 
     // 0 classic, 1 spatial matched residual, 2 privately upscaled residual.
@@ -113,15 +94,12 @@ struct alignas(256) DlssNrConstants
     float ResidualScale; // Scene pre-exposure used to encode/decode the private residual carrier.
     uint32_t SkinProtection;
     uint32_t ShowSkinMask;
-    float SkinDetail;
-    float SkinColour;
-    float EnvironmentDetail;
-    float EnvironmentColour;
+    float SkinDetail, SkinColour;
+    float EnvironmentDetail, EnvironmentColour;
 
     float ResidualBlend;
     uint32_t ResidualHistoryValid;
-    uint32_t ResidualMotionBaseX;
-    uint32_t ResidualMotionBaseY;
+    uint32_t ResidualMotionBaseX, ResidualMotionBaseY;
 };
 static_assert(sizeof(DlssNrConstants) == 256);
 
@@ -132,39 +110,37 @@ enum DlssNrResidualMode : uint32_t
     DlssNrResidualMode_Apply = 1,      // base + delta * TransferStrength, after RR+SR
 };
 
-class DlssNr_Common
+namespace DlssNr_Common
 {
-  public:
-    // Common composition controls for DX12 and Vulkan.
-    template <typename ConfigType>
-    static DlssNrConstants MakeConstants(DlssNrMode mode, uint32_t width, uint32_t height, float whitePoint,
-                                         bool linearHdr, const ConfigType& config)
-    {
-        DlssNrConstants constants {};
-        constants.Mode = mode;
-        constants.Width = width;
-        constants.Height = height;
-        constants.WhitePoint = whitePoint;
-        constants.Passthrough = linearHdr ? 0u : 1u;
-        constants.TransferStrength = config.DlssNrTransferStrength.value_or_default();
-        constants.ColourStrength = config.DlssNrColourStrength.value_or_default();
-        constants.DebugView = config.DlssNrDebugView.value_or_default();
-        constants.MaxRatio = config.DlssNrMaxRatio.value_or_default();
-        constants.Transfer = std::min(config.DlssNrTransfer.value_or_default(), 1u);
-        constants.DebugScale = config.DlssNrWhitePointScale.value_or_default();
-        constants.CompareMode = config.DlssNrCompare.value_or_default();
-        constants.CompareSplit = config.DlssNrCompareSplit.value_or_default();
-        constants.CompareZoom = std::max(1.0f, config.DlssNrCompareZoom.value_or_default());
-        constants.CompareSwap = config.DlssNrCompareSwap.value_or_default() ? 1u : 0u;
-        constants.ReversibleMode = config.DlssNrReversibleMode.value_or_default();
-        constants.ApplyModel = config.DlssNrApplyModel.value_or_default() ? 1u : 0u;
-        constants.SkinProtection = config.DlssNrSkinProtection.value_or_default() ? 1u : 0u;
-        constants.ShowSkinMask = config.DlssNrShowSkinMask.value_or_default() ? 1u : 0u;
-        constants.SkinDetail = config.DlssNrSkinDetail.value_or_default();
-        constants.SkinColour = config.DlssNrSkinColour.value_or_default();
-        constants.EnvironmentDetail = config.DlssNrEnvironmentDetail.value_or_default();
-        constants.EnvironmentColour = config.DlssNrEnvironmentColour.value_or_default();
-        return constants;
-    }
-
-};
+// Common composition controls for DX12 and Vulkan.
+template <typename ConfigType>
+DlssNrConstants MakeConstants(DlssNrMode mode, uint32_t width, uint32_t height, float whitePoint,
+                              bool linearHdr, const ConfigType& config)
+{
+    DlssNrConstants constants {};
+    constants.Mode = mode;
+    constants.Width = width;
+    constants.Height = height;
+    constants.WhitePoint = whitePoint;
+    constants.Passthrough = linearHdr ? 0u : 1u;
+    constants.TransferStrength = config.DlssNrTransferStrength.value_or_default();
+    constants.ColourStrength = config.DlssNrColourStrength.value_or_default();
+    constants.DebugView = config.DlssNrDebugView.value_or_default();
+    constants.MaxRatio = config.DlssNrMaxRatio.value_or_default();
+    constants.Transfer = std::min(config.DlssNrTransfer.value_or_default(), 1u);
+    constants.DebugScale = config.DlssNrWhitePointScale.value_or_default();
+    constants.CompareMode = config.DlssNrCompare.value_or_default();
+    constants.CompareSplit = config.DlssNrCompareSplit.value_or_default();
+    constants.CompareZoom = std::max(1.0f, config.DlssNrCompareZoom.value_or_default());
+    constants.CompareSwap = config.DlssNrCompareSwap.value_or_default() ? 1u : 0u;
+    constants.ReversibleMode = config.DlssNrReversibleMode.value_or_default();
+    constants.ApplyModel = config.DlssNrApplyModel.value_or_default() ? 1u : 0u;
+    constants.SkinProtection = config.DlssNrSkinProtection.value_or_default() ? 1u : 0u;
+    constants.ShowSkinMask = config.DlssNrShowSkinMask.value_or_default() ? 1u : 0u;
+    constants.SkinDetail = config.DlssNrSkinDetail.value_or_default();
+    constants.SkinColour = config.DlssNrSkinColour.value_or_default();
+    constants.EnvironmentDetail = config.DlssNrEnvironmentDetail.value_or_default();
+    constants.EnvironmentColour = config.DlssNrEnvironmentColour.value_or_default();
+    return constants;
+}
+}

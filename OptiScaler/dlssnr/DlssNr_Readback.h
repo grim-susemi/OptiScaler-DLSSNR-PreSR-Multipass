@@ -1,5 +1,5 @@
 #pragma once
-#include <d3d12.h>
+#include "../include/d3dx/d3dx12.h"
 #include <wrl/client.h>
 #include <filesystem>
 #include <fstream>
@@ -12,15 +12,8 @@ namespace DlssNr
 {
 inline bool CreateReadbackBuffer(ID3D12Device* device, UINT64 bytes, ID3D12Resource** result)
 {
-    D3D12_HEAP_PROPERTIES heap {};
-    heap.Type = D3D12_HEAP_TYPE_READBACK;
-    D3D12_RESOURCE_DESC desc {};
-    desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    desc.Width = bytes;
-    desc.Height = 1;
-    desc.DepthOrArraySize = desc.MipLevels = 1;
-    desc.SampleDesc.Count = 1;
-    desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK, 0, 0);
+    const auto desc = CD3DX12_RESOURCE_DESC::Buffer(bytes);
     return SUCCEEDED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
         D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(result)));
 }
@@ -103,13 +96,7 @@ struct ReadbackImage
                                D3D12_RESOURCE_STATE_COPY_SOURCE };
         if (state != D3D12_RESOURCE_STATE_COPY_SOURCE)
             cmd->ResourceBarrier(1, &barrier);
-        D3D12_TEXTURE_COPY_LOCATION from {};
-        from.pResource = source;
-        from.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-        D3D12_TEXTURE_COPY_LOCATION to {};
-        to.pResource = readback.Get();
-        to.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-        to.PlacedFootprint = layout;
+        const CD3DX12_TEXTURE_COPY_LOCATION from(source, 0), to(readback.Get(), layout);
         cmd->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
         std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
         if (state != D3D12_RESOURCE_STATE_COPY_SOURCE)

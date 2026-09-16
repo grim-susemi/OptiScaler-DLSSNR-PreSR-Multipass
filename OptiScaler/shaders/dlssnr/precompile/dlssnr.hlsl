@@ -18,11 +18,6 @@ float SkinColourWeight(float3 rgb)
     return (1.0 - smoothstep(0.55, 1.35, length(distance))) * smoothstep(0.02, 0.10, chroma);
 }
 
-float SafeDivide(float numerator, float denominator, float fallback)
-{
-    return abs(denominator) > 1e-8 ? numerator / denominator : fallback;
-}
-
 // Hunt-Pointer-Estevez LMS over linear BT.709, carrying the fixed D65 adaptation state the
 // compression is defined against. The signal itself never leaves BT.709.
 float3 LMSToBT709(float3 color)
@@ -50,45 +45,30 @@ float3 D65NeutralBT709(float3 adaptiveStateLms, float luminance)
     return d65 * (luminance / d65Y);
 }
 
-// The largest scale toward the neutral axis that leaves no channel negative. One for a colour that
-// was already representable, which is why this is safe to run on every pixel.
-float GamutCompressionScale(float3 color, float3 adaptiveStateLms)
-{
-    color = SanitizeFinite3(color, float3(0.0, 0.0, 0.0));
-
-    const float y = dot(color, float3(0.2126, 0.7152, 0.0722));
-
-    if (!(y > 1e-8))
-        return 1.0;
-
-    const float3 neutral = D65NeutralBT709(adaptiveStateLms, y);
-    float scale = 1.0;
-
-    if (color.r < 0.0 && neutral.r > color.r)
-        scale = min(scale, SafeDivide(neutral.r, neutral.r - color.r, 1.0));
-
-    if (color.g < 0.0 && neutral.g > color.g)
-        scale = min(scale, SafeDivide(neutral.g, neutral.g - color.g, 1.0));
-
-    if (color.b < 0.0 && neutral.b > color.b)
-        scale = min(scale, SafeDivide(neutral.b, neutral.b - color.b, 1.0));
-
-    return saturate(SanitizeFinite(scale, 1.0));
-}
-
+// Compress toward the neutral axis until every channel is nonnegative, preserving hue.
 float3 ClampAp1(float3 color)
 {
     const float3 adaptiveStateLms = BT709ToLMS(float3(0.18, 0.18, 0.18));
-    const float scale = GamutCompressionScale(color, adaptiveStateLms);
+    const float3 finite = SanitizeFinite3(color, 0.0);
+    const float y = dot(finite, float3(0.2126, 0.7152, 0.0722));
+    if (!(y > 1e-8))
+        return color;
+
+    const float3 neutral = D65NeutralBT709(adaptiveStateLms, y);
+    float scale = 1.0;
+    [unroll] for (uint channel = 0; channel < 3; ++channel)
+    {
+        const float distance = neutral[channel] - finite[channel];
+        if (finite[channel] < 0.0 && neutral[channel] > finite[channel])
+            scale = min(scale, abs(distance) > 1e-8 ? neutral[channel] / distance : 1.0);
+    }
+    scale = saturate(SanitizeFinite(scale, 1.0));
 
     // Nothing was out of gamut. Leave the colour exactly as it arrived.
     if (scale >= 1.0)
         return color;
-
-    const float y = dot(color, float3(0.2126, 0.7152, 0.0722));
-    const float3 neutral = D65NeutralBT709(adaptiveStateLms, y);
-
-    return SanitizeFinite3(neutral + (color - neutral) * scale, max(neutral, 0.0));
+    const float3 axis = D65NeutralBT709(adaptiveStateLms, dot(color, float3(0.2126, 0.7152, 0.0722)));
+    return SanitizeFinite3(axis + (color - axis) * scale, max(axis, 0.0));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -139,11 +119,6 @@ float3 HueOkLab(float3 incorrect, float3 correct)
     incorrectLab.yz = hueDirection * incorrectChroma;
 
     return ClampAp1(FromOkLab(incorrectLab));
-}
-
-float WhitePoint()
-{
-    return max(gWhitePoint, 1e-4);
 }
 
 static const float3 kLuma = float3(0.2126, 0.7152, 0.0722);
@@ -246,6 +221,7 @@ void CSMain(uint3 id : SV_DispatchThreadID)
 
     // Normalised, so the source may be any size relative to this dispatch.
     float2 uv = (float2(id.xy) + 0.5) / float2(gWidth, gHeight);
+    const float whitePoint = max(gWhitePoint, 1e-4);
 
     // Experimental private-DLSS carrier, not an ordinary colour image. Neutral 0.5 encodes zero;
     // values below it carry darkening. A reversible signed compression avoids clipping negative
@@ -307,11 +283,11 @@ void CSMain(uint3 id : SV_DispatchThreadID)
 
     if (gMode == 2)
     {
-        uint srcW, srcH;
-        gSource.GetDimensions(srcW, srcH);
+        uint2 size;
+        gSource.GetDimensions(size.x, size.y);
 
         // Nothing to do when the sizes already agree.
-        if (srcW == gWidth && srcH == gHeight)
+        if (all(size == uint2(gWidth, gHeight)))
         {
             gTarget[id.xy] = gSource.Load(int3(id.xy, 0));
             return;
@@ -319,39 +295,24 @@ void CSMain(uint3 id : SV_DispatchThreadID)
 
         // Exact area-weighted downsampling avoids the aliasing of a single bilinear tap.
         // Adapted from hhkbble's multi-pass contribution.
-        const float x0 = ((float) id.x * (float) srcW) / (float) gWidth;
-        const float x1 = ((float) (id.x + 1) * (float) srcW) / (float) gWidth;
-        const float y0 = ((float) id.y * (float) srcH) / (float) gHeight;
-        const float y1 = ((float) (id.y + 1) * (float) srcH) / (float) gHeight;
-        const float area = (x1 - x0) * (y1 - y0);
-
-        const int i0 = (int) floor(x0);
-        const int i1 = (int) ceil(x1) - 1;
-        const int j0 = (int) floor(y0);
-        const int j1 = (int) ceil(y1) - 1;
-
+        const float2 lo = (float2(id.xy) * float2(size)) / float2(gWidth, gHeight);
+        const float2 hi = (float2(id.xy + 1) * float2(size)) / float2(gWidth, gHeight);
+        const float area = (hi.x - lo.x) * (hi.y - lo.y);
+        const int2 first = int2(floor(lo)), last = int2(ceil(hi)) - 1;
         float3 acc = 0.0;
-
-        for (int j = j0; j <= j1; ++j)
+        for (int j = first.y; j <= last.y; ++j)
         {
-            const int jj = clamp(j, 0, (int) srcH - 1);
-            const float aY = max(y0, (float) j);
-            const float bY = min(y1, (float) j + 1.0);
-            const float wy = max(bY - aY, 0.0);
-
-            for (int i = i0; i <= i1; ++i)
+            const float wy = max(min(hi.y, (float) j + 1.0) - max(lo.y, (float) j), 0.0);
+            for (int i = first.x; i <= last.x; ++i)
             {
-                const int ii = clamp(i, 0, (int) srcW - 1);
-                const float aX = max(x0, (float) i);
-                const float bX = min(x1, (float) i + 1.0);
-                acc += gSource.Load(int3(ii, jj, 0)).rgb * (max(bX - aX, 0.0) * wy);
+                const float wx = max(min(hi.x, (float) i + 1.0) - max(lo.x, (float) i), 0.0);
+                const int2 at = clamp(int2(i, j), 0, int2(size) - 1);
+                acc += gSource.Load(int3(at, 0)).rgb * (wx * wy);
             }
         }
-
-        const int acx = clamp((int) floor(((float) id.x + 0.5) * (float) srcW / (float) gWidth), 0, (int) srcW - 1);
-        const int acy = clamp((int) floor(((float) id.y + 0.5) * (float) srcH / (float) gHeight), 0, (int) srcH - 1);
-
-        gTarget[id.xy] = float4(acc / area, gSource.Load(int3(acx, acy, 0)).a);
+        const int2 center = clamp(int2(floor((float2(id.xy) + 0.5) * float2(size) / float2(gWidth, gHeight))),
+                                  0, int2(size) - 1);
+        gTarget[id.xy] = float4(acc / area, gSource.Load(int3(center, 0)).a);
         return;
     }
 
@@ -374,7 +335,7 @@ void CSMain(uint3 id : SV_DispatchThreadID)
 
         // The chosen proxy curve is reproduced during matched-residual composition.
         // Passthrough has already returned, so these curves only receive linear HDR.
-        float3 normalized = frame / WhitePoint();
+        float3 normalized = frame / whitePoint;
         float3 display;
         if (gReversibleMode == 0)
             display = SoftKnee(normalized);        // soft knee
@@ -429,7 +390,7 @@ void CSMain(uint3 id : SV_DispatchThreadID)
                                               : gOriginal.Load(int3(id.xy, 0));
 
     // Normalize scene-linear colour to the same white point as the decoded proxy and model.
-    const float normScale = gPassthrough != 0 ? 1.0 : WhitePoint();
+    const float normScale = gPassthrough != 0 ? 1.0 : whitePoint;
     float3 original = originalSample.rgb / normScale;
 
     float originalLuma = dot(original, kLuma);
@@ -442,15 +403,9 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         return;
     }
 
-    if (gDebugView == 1)
+    if (gDebugView == 1 || gDebugView == 2)
     {
-        gTarget[id.xy] = float4(proxy * gDebugScale, originalSample.a);
-        return;
-    }
-
-    if (gDebugView == 2)
-    {
-        gTarget[id.xy] = float4(model * gDebugScale, originalSample.a);
+        gTarget[id.xy] = float4((gDebugView == 1 ? proxy : model) * gDebugScale, originalSample.a);
         return;
     }
 
@@ -502,18 +457,9 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     }
     else
     {
-        float ratio;
-
-        if (originalLuma < proxyLuma)
-        {
-            // Below what the proxy showed: the frame's own luminance is the target.
-            ratio = originalLuma / max(proxyLuma, 1e-6);
-        }
-        else
-        {
-            // Restore scene headroom absent from the proxy.
-            ratio = (modelLuma + max(0.0, originalLuma - proxyLuma)) / modelLuma;
-        }
+        // Match lower scene luminance, or restore scene headroom absent from the proxy.
+        float ratio = originalLuma < proxyLuma ? originalLuma / max(proxyLuma, 1e-6)
+                                              : (modelLuma + max(0.0, originalLuma - proxyLuma)) / modelLuma;
 
         // Keep the RGB blend within [0,1]; strength above 1 amplifies the bounded luminance ratio below.
         upgraded = lerp(original, HueOkLab(model * ratio, model), saturate(gTransferStrength));
@@ -582,7 +528,7 @@ void CSMain(uint3 id : SV_DispatchThreadID)
 
     // A hairline so the two sides are never mistaken for one picture.
     if (onDivider)
-        result = float3(WhitePoint(), WhitePoint(), WhitePoint());
+        result = whitePoint.xxx;
 
     gTarget[id.xy] = float4(max(result, float3(0.0, 0.0, 0.0)), originalSample.a);
 }

@@ -234,21 +234,8 @@ void RenderMenu(Config* config, float menuResScale)
         RenderStatus(config);
         ImGui::SeparatorText(PipelineUi::SectionName(selected));
         ImGui::PushItemWidth(std::min(220.0f * menuResScale, ImGui::GetContentRegionAvail().x * 0.42f));
-        switch (selected)
-        {
-        case PipelineUi::Section::Placement:
-            RenderPlacement(config);
-            break;
-        case PipelineUi::Section::Input:
-            RenderInput(config);
-            break;
-        case PipelineUi::Section::Model:
-            RenderModel(config);
-            break;
-        case PipelineUi::Section::Blend:
-            RenderBlend(config);
-            break;
-        }
+        static constexpr void (*sections[])(Config*) = { RenderPlacement, RenderInput, RenderModel, RenderBlend };
+        sections[(int) selected](config);
         ImGui::PopItemWidth();
         if (ImGui::CollapsingHeader("Inspect NR"))
         {

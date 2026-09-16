@@ -125,20 +125,24 @@ auto DlssNr_Dx12::State::ReleaseResources() -> void
     modelRunning = false;
 
     for (auto** resource : { &nr.output, &nr.passScratch, &nr.passClamp, &nr.colorCopy, &nr.hdrCopy,
-                             &nr.activeColor, &nr.colorSmall })
+                             &nr.activeColor, &nr.colorSmall, &nr.outputNative, &nr.heldColor,
+                             &nr.depthClone, &nr.motionClone })
         ParkNrResource(*resource);
 
     ReleaseSupersamplers();
-
-    ParkNrResource(nr.outputNative);
-
-    ParkNrResource(nr.heldColor);
-
-    ParkNrResource(nr.depthClone);
-
-    ParkNrResource(nr.motionClone);
-
     captureFrames.release();
     if (auto* timer = gpuTime.release()) lifetime.Retire([timer] { delete timer; });
     lastGpuTime.reset();
+}
+
+bool DlssNr_Dx12::ReadyToDestroy()
+{
+    std::lock_guard lock(_state->mutex);
+    if (!_state->enlargementLifetime.Idle()) return false;
+    if (!_state->lifetime.Idle() || !_state->deferredSr.lifetime.Idle()) return false;
+    for (auto& model : _state->nr.models)
+        if (!model.Idle()) return false;
+    for (const auto& slot : _state->late.slots)
+        if (slot.submitted && !_state->late.Finished(slot)) return false;
+    return true;
 }

@@ -38,18 +38,8 @@ struct View
 
 inline const char* SectionName(Section section)
 {
-    switch (section)
-    {
-    case Section::Placement:
-        return "Placement";
-    case Section::Input:
-        return "Input";
-    case Section::Model:
-        return "Model passes";
-    case Section::Blend:
-        return "Apply NR edit";
-    }
-    return "";
+    static constexpr const char* names[] = { "Placement", "Input", "Model passes", "Apply NR edit" };
+    return names[(int) section];
 }
 
 // Keep both top-level toggles on one row, wrapping their clickable labels in narrow overlays.

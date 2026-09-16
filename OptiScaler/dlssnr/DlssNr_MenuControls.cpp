@@ -5,11 +5,36 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
 namespace DlssNr::MenuSections
 {
+template <typename Option> static void Checkbox(const char* label, Option& option)
+{
+    bool value = option.value_or_default();
+    if (ImGui::Checkbox(label, &value))
+        option = value;
+}
+
+template <typename Option>
+static void Slider(const char* label, Option& option, float minimum, float maximum, const char* format = "%.2f",
+                   std::optional<float> reset = {}, ImGuiSliderFlags flags = 0)
+{
+    float value = option.value_or_default();
+    if (ImGui::SliderFloat(label, &value, minimum, maximum, format, flags))
+        option = value;
+    if (reset)
+    {
+        ImGui::SameLine();
+        ImGui::PushID(label);
+        if (ImGui::SmallButton("Reset"))
+            option = *reset;
+        ImGui::PopID();
+    }
+}
+
 void RenderInput(Config* config)
 {
     // Resolution changes rebuild model resources; commit only after releasing the slider.
@@ -67,9 +92,7 @@ void RenderInput(Config* config)
 
     HelpMarker("HDR mapping curve. Replace bypasses strength and highlight controls.");
 
-    float wpScale = config->DlssNrWhitePointScale.value_or_default();
-    if (ImGui::SliderFloat("Paper white", &wpScale, 0.25f, 2000.0f, "%.2fx", ImGuiSliderFlags_Logarithmic))
-        config->DlssNrWhitePointScale = wpScale;
+    Slider("Paper white", config->DlssNrWhitePointScale, 0.25f, 2000.0f, "%.2fx", {}, ImGuiSliderFlags_Logarithmic);
     HelpMarker("Higher values darken the NR input; lower values brighten it.");
 }
 
@@ -201,73 +224,41 @@ void RenderBlend(Config* config)
         const auto feature = State::Instance().currentFeature;
         ImGui::BeginDisabled(State::Instance().swapchainApi == API::Vulkan ||
                              (feature && feature->GetUpscalerType() == Upscaler::DLSSD));
-        bool hdrTransfer = config->DlssNrHdrTransfer.value_or_default();
-        if (ImGui::Checkbox("Match HDR brightness response (experimental)", &hdrTransfer))
-            config->DlssNrHdrTransfer = hdrTransfer;
+        Checkbox("Match HDR brightness response (experimental)", config->DlssNrHdrTransfer);
         ImGui::EndDisabled();
         HelpMarker("Match early NR brightness changes to the finished HDR image. Adds GPU work; unreliable fits fall back.");
     }
-    float transfer = config->DlssNrTransferStrength.value_or_default();
-    if (ImGui::SliderFloat("Detail strength", &transfer, 0.0f, 2.0f, "%.2f"))
-        config->DlssNrTransferStrength = transfer;
-
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Reset##detail"))
-        config->DlssNrTransferStrength = 1.0f;
-
+    Slider("Detail strength", config->DlssNrTransferStrength, 0.0f, 2.0f, "%.2f", 1.0f);
     HelpMarker("0 = no detail change. 1 = normal.");
 
-    float colour = config->DlssNrColourStrength.value_or_default();
-    if (ImGui::SliderFloat("Colour strength", &colour, 0.0f, 4.0f, "%.2f"))
-        config->DlssNrColourStrength = colour;
-
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Reset##colour"))
-        config->DlssNrColourStrength = 1.0f;
-
+    Slider("Colour strength", config->DlssNrColourStrength, 0.0f, 4.0f, "%.2f", 1.0f);
     HelpMarker("0 = game colours. 1 = model colours. Above 1 boosts saturation.");
 
     if (ImGui::TreeNode("Skin and environment (final edit)"))
     {
-        bool filter = config->DlssNrSkinProtection.value_or_default();
-        if (ImGui::Checkbox("Separate skin / environment controls", &filter))
-            config->DlssNrSkinProtection = filter;
-        ImGui::BeginDisabled(!filter);
+        Checkbox("Separate skin / environment controls", config->DlssNrSkinProtection);
+        ImGui::BeginDisabled(!config->DlssNrSkinProtection.value_or_default());
         const auto slider = [](const char* label, auto& option)
         {
-            float v = option.value_or_default();
-            if (ImGui::SliderFloat(label, &v, 0.0f, 1.0f, "%.2f"))
-                option = v;
+            Slider(label, option, 0.0f, 1.0f);
             HelpMarker("0 = unchanged. 1 = full effect.");
         };
         slider("Skin detail / lighting", config->DlssNrSkinDetail);
         slider("Skin colour", config->DlssNrSkinColour);
         slider("Environment detail / lighting", config->DlssNrEnvironmentDetail);
         slider("Environment colour", config->DlssNrEnvironmentColour);
-        bool preview = config->DlssNrShowSkinMask.value_or_default();
-        if (ImGui::Checkbox("Preview colour-based mask", &preview))
-            config->DlssNrShowSkinMask = preview;
+        Checkbox("Preview colour-based mask", config->DlssNrShowSkinMask);
         ImGui::EndDisabled();
         ImGui::TreePop();
     }
 
-    float maxRatio = config->DlssNrMaxRatio.value_or_default();
-    if (ImGui::SliderFloat("Highlight guard", &maxRatio, 1.0f, 8.0f, "%.1fx"))
-        config->DlssNrMaxRatio = maxRatio;
-
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Reset##guard"))
-        config->DlssNrMaxRatio = 2.0f;
-
+    Slider("Highlight guard", config->DlssNrMaxRatio, 1.0f, 8.0f, "%.1fx", 2.0f);
     HelpMarker("Limit pixel brightening and darkening.");
 }
 
 void RenderInspect(Config* config)
 {
-    bool held = config->DlssNrHoldFrame.value_or_default();
-    if (ImGui::Checkbox("Hold frame", &held))
-        config->DlssNrHoldFrame = held;
-
+    Checkbox("Hold frame", config->DlssNrHoldFrame);
     HelpMarker("Freeze a frame for NR tuning. Later game effects may update; temporal behaviour is not representative.");
 
     static const char* compareNames[] = { "Off", "Side by side", "Wipe" };
@@ -279,40 +270,21 @@ void RenderInspect(Config* config)
 
     if (compare != 0)
     {
-        bool swap = config->DlssNrCompareSwap.value_or_default();
-        if (ImGui::Checkbox("Swap sides", &swap))
-            config->DlssNrCompareSwap = swap;
-
-
-        bool tags = config->DlssNrCompareTags.value_or_default();
-        if (ImGui::Checkbox("Label the sides", &tags))
-            config->DlssNrCompareTags = tags;
-
-
-
-        if (tags)
-        {
-            float tagScale = config->DlssNrTagScale.value_or_default();
-            if (ImGui::SliderFloat("Label size", &tagScale, 0.5f, 5.0f, "%.1fx"))
-                config->DlssNrTagScale = std::clamp(tagScale, 0.5f, 5.0f);
-        }
+        Checkbox("Swap sides", config->DlssNrCompareSwap);
+        Checkbox("Label the sides", config->DlssNrCompareTags);
+        if (config->DlssNrCompareTags.value_or_default())
+            Slider("Label size", config->DlssNrTagScale, 0.5f, 5.0f, "%.1fx", {}, ImGuiSliderFlags_AlwaysClamp);
     }
 
     if (compare == 1)
     {
-        float zoom = config->DlssNrCompareZoom.value_or_default();
-        if (ImGui::SliderFloat("Zoom", &zoom, 1.0f, 2.0f, "%.2f"))
-            config->DlssNrCompareZoom = std::clamp(zoom, 1.0f, 2.0f);
-
+        Slider("Zoom", config->DlssNrCompareZoom, 1.0f, 2.0f, "%.2f", {}, ImGuiSliderFlags_AlwaysClamp);
         HelpMarker("1 = fit. 2 = crop and enlarge.");
     }
 
     if (compare == 2)
     {
-        float split = config->DlssNrCompareSplit.value_or_default();
-        if (ImGui::SliderFloat("Split", &split, 0.0f, 1.0f, "%.2f"))
-            config->DlssNrCompareSplit = std::clamp(split, 0.0f, 1.0f);
-
+        Slider("Split", config->DlssNrCompareSplit, 0.0f, 1.0f, "%.2f", {}, ImGuiSliderFlags_AlwaysClamp);
         HelpMarker("Move the comparison boundary.");
     }
 

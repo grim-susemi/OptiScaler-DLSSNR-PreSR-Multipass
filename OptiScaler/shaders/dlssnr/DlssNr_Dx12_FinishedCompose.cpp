@@ -138,6 +138,7 @@ auto DlssNr_Dx12::State::ApplyFinishedColor(ID3D12Resource* color, ID3D12Command
     bool rendered = false;
     bool appliedResidual = false;
     bool matchedResponse = false;
+    DlssNr::ResourceStates_Dx12 resources { cmd };
     if (slot.residualOnly)
     {
         if (slot.encoded &&
@@ -148,9 +149,8 @@ auto DlssNr_Dx12::State::ApplyFinishedColor(ID3D12Resource* color, ID3D12Command
             slot.encoded.Attach(CreateScratch(late.device.Get(), desc.Format, (unsigned) desc.Width, desc.Height));
         if (slot.encoded && Config::Instance()->DlssNrApplyModel.value_or_default())
         {
-            Barrier(cmd, slot.residual.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
-                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            Barrier(cmd, color, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            resources.Read(slot.residual.Get(), D3D12_RESOURCE_STATE_COPY_DEST);
+            resources.Read(color, D3D12_RESOURCE_STATE_PRESENT);
             DlssNrConstants apply {};
             apply.Mode = pq ? 4 : scrgb ? 3 : 2;
             apply.Width = (unsigned) desc.Width;
@@ -162,8 +162,7 @@ auto DlssNr_Dx12::State::ApplyFinishedColor(ID3D12Resource* color, ID3D12Command
                                  slot.sceneLinear && (pq || scrgb);
             if (measure)
             {
-                Barrier(cmd, slot.cleanScene.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
-                        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                resources.Read(slot.cleanScene.Get(), D3D12_RESOURCE_STATE_COPY_DEST);
                 for (auto& curve : slot.response)
                 {
                     if (!curve)
@@ -191,13 +190,12 @@ auto DlssNr_Dx12::State::ApplyFinishedColor(ID3D12Resource* color, ID3D12Command
                                     epoch - slot.responseEpoch <= 8 &&
                                     slot.frame.PreExposure >= slot.responseExposure * 0.8f &&
                                     slot.frame.PreExposure <= slot.responseExposure * 1.25f;
-                    Barrier(cmd, slot.response[next].Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                    resources.Set(slot.response[next].Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                  D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                     matchedResponse = shader.DispatchResidualPass(cmd, fit, color, slot.cleanScene.Get(),
                                                                   slot.response[slot.responseIndex].Get(), nullptr,
                                                                   slot.response[next].Get(), true);
-                    Barrier(cmd, slot.response[next].Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                    resources.Read(slot.response[next].Get());
                     slot.responseValid = matchedResponse;
                     if (matchedResponse)
                     {
@@ -216,17 +214,11 @@ auto DlssNr_Dx12::State::ApplyFinishedColor(ID3D12Resource* color, ID3D12Command
             appliedResidual = shader.DispatchResidualPass(
                 cmd, apply, color, matchedResponse ? slot.cleanScene.Get() : nullptr, slot.residual.Get(),
                 matchedResponse ? slot.response[slot.responseIndex].Get() : nullptr, slot.encoded.Get(), true);
-            if (measure)
-                Barrier(cmd, slot.cleanScene.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-                        D3D12_RESOURCE_STATE_COPY_DEST);
             if (!appliedResidual)
                 slot.responseValid = false;
             if (appliedResidual)
                 CopyTexture(cmd, color, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                             slot.encoded.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-            Barrier(cmd, color, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PRESENT);
-            Barrier(cmd, slot.residual.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-                    D3D12_RESOURCE_STATE_COPY_DEST);
         }
     }
     else
@@ -237,10 +229,8 @@ auto DlssNr_Dx12::State::ApplyFinishedColor(ID3D12Resource* color, ID3D12Command
         frame.WhitePointOverride = (pq || scrgb) ? 203.0f / 80.0f : 0.0f;
         frame.Reset |= late.reset;
         frame.SubmissionEpoch = epoch;
-        Barrier(cmd, slot.depth.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
-                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-        Barrier(cmd, slot.motion.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
-                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        resources.Read(slot.depth.Get(), D3D12_RESOURCE_STATE_COPY_DEST);
+        resources.Read(slot.motion.Get(), D3D12_RESOURCE_STATE_COPY_DEST);
         ID3D12Resource* nrColor = color;
         bool colorReady = true;
         DlssNrConstants conversion {};
@@ -260,12 +250,9 @@ auto DlssNr_Dx12::State::ApplyFinishedColor(ID3D12Resource* color, ID3D12Command
             colorReady = ensure(slot.linear, DXGI_FORMAT_R16G16B16A16_FLOAT) && ensure(slot.encoded, desc.Format);
             if (colorReady)
             {
-                Barrier(cmd, color, D3D12_RESOURCE_STATE_PRESENT,
-                        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                resources.Read(color, D3D12_RESOURCE_STATE_PRESENT);
                 colorReady = shader.DispatchResidualPass(cmd, conversion, color, nullptr, nullptr, nullptr,
                                                          slot.linear.Get(), true);
-                Barrier(cmd, color, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-                        D3D12_RESOURCE_STATE_PRESENT);
                 // Dispatch reads the converted colour; its transition out of UAV orders the conversion.
                 nrColor = slot.linear.Get();
                 frame.OutputArrivalState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
@@ -277,22 +264,14 @@ auto DlssNr_Dx12::State::ApplyFinishedColor(ID3D12Resource* color, ID3D12Command
             Config::Instance()->DlssNrApplyModel.value_or_default())
         {
             conversion.Mode = 1;
-            Barrier(cmd, slot.linear.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            Barrier(cmd, color, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            resources.Read(slot.linear.Get());
             if (shader.DispatchResidualPass(cmd, conversion, slot.linear.Get(), nullptr, color, nullptr,
                                             slot.encoded.Get(), true))
                 CopyTexture(cmd, color, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                             slot.encoded.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-            Barrier(cmd, color, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PRESENT);
-            Barrier(cmd, slot.linear.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         }
-        Barrier(cmd, slot.motion.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-                D3D12_RESOURCE_STATE_COPY_DEST);
-        Barrier(cmd, slot.depth.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-                D3D12_RESOURCE_STATE_COPY_DEST);
     }
+    resources.Restore();
     if (FAILED(cmd->Close()))
     {
         late.heldFailed |= holdFinished;

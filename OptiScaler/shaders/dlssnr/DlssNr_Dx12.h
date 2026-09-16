@@ -32,7 +32,7 @@ class DlssNr_Dx12 : public Shader_Dx12, public DlssNr_Common
     ID3D12PipelineState* _residualPipelineState = nullptr;
     ID3D12PipelineState* _finishedColorPipelineState = nullptr;
 
-    // Caller holds the owner and state locks; all NR shaders share the descriptor layout.
+    // Caller holds both locks and supplies valid commands/source/target; NR shaders share the descriptor layout.
     bool DispatchCompute(ID3D12GraphicsCommandList* cmd, const DlssNrConstants& constants,
                          ID3D12PipelineState* pipeline, ID3D12Resource* source, ID3D12Resource* model,
                          ID3D12Resource* original, ID3D12Resource* motion,

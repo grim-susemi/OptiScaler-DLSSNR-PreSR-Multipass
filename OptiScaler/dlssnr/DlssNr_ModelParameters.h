@@ -13,6 +13,16 @@ struct ModelSettings
     bool operator==(const ModelSettings&) const = default;
 };
 
+// Borrowed inputs; Vulkan uses void pointers to NGX image wrappers, DX12 uses typed resources.
+template <typename Resource> struct ModelFrame
+{
+    Resource *color = nullptr, *depth = nullptr, *motion = nullptr, *output = nullptr;
+    GuideExtent size {};
+    GuideRegions guides {};
+    bool depthInverted = false, reset = false;
+    float mvScaleX = 1.0f, mvScaleY = 1.0f;
+};
+
 inline void SetModelTuning(NVSDK_NGX_Parameter* params, const ModelSettings& settings)
 {
     params->Set("DLSSNR.Intensity", settings.intensity);
@@ -70,5 +80,24 @@ inline void SetModelRegions(NVSDK_NGX_Parameter* params, GuideExtent size, const
     params->Set("DLSSNR.MVecSubrectBaseY", guides.motion.y);
     params->Set("DLSSNR.MVecSubrectWidth", guides.motion.width);
     params->Set("DLSSNR.MVecSubrectHeight", guides.motion.height);
+}
+
+template <typename Resource>
+void SetModelEvaluation(NVSDK_NGX_Parameter* params, const ModelFrame<Resource>& frame,
+                        const ModelSettings& settings, bool forceReset = false)
+{
+    params->Set("DLSSNR.Color", frame.color);
+    params->Set("DLSSNR.Depth", frame.depth);
+    params->Set("DLSSNR.MVec", frame.motion);
+    params->Set("DLSSNR.Output", frame.output);
+    params->Set("DLSSNR.Enabled", 1u);
+    params->Set("DLSSNR.Width", frame.size.width);
+    params->Set("DLSSNR.Height", frame.size.height);
+    params->Set("DLSSNR.DepthInverted", frame.depthInverted ? 1u : 0u);
+    params->Set("DLSSNR.Reset", (frame.reset || forceReset) ? 1u : 0u);
+    SetModelRegions(params, frame.size, frame.guides);
+    params->Set("DLSSNR.MVecScaleX", frame.mvScaleX);
+    params->Set("DLSSNR.MVecScaleY", frame.mvScaleY);
+    SetModelTuning(params, settings);
 }
 }

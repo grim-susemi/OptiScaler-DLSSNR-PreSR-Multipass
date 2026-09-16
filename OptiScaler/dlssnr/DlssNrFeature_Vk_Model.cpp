@@ -133,32 +133,6 @@ bool ModelVk::Impl::CreateModel(VkCommandBuffer commandBuffer, unsigned int pass
     return true;
 }
 
-NVSDK_NGX_Result ModelVk::Impl::EvaluateModel(VkCommandBuffer commandBuffer, unsigned int passIndex,
-                              NVSDK_NGX_Resource_VK* colour, NVSDK_NGX_Resource_VK* depth,
-                              NVSDK_NGX_Resource_VK* motion, NVSDK_NGX_Resource_VK* output,
-                              unsigned int width, unsigned int height, const GuideRegions& guides,
-                              bool depthInverted, float mvX, float mvY, const Config& config)
-{
-    auto& model = state.models[passIndex];
-    auto* parameters = model.parameters;
-    // The Vulkan SDK stores pointers to NVSDK_NGX_Resource_VK through the void-pointer overload.
-    parameters->Set("DLSSNR.Color", static_cast<void*>(colour));
-    parameters->Set("DLSSNR.Depth", static_cast<void*>(depth));
-    parameters->Set("DLSSNR.MVec", static_cast<void*>(motion));
-    parameters->Set("DLSSNR.Output", static_cast<void*>(output));
-    parameters->Set("DLSSNR.Enabled", 1u);
-    parameters->Set("DLSSNR.Width", width);
-    parameters->Set("DLSSNR.Height", height);
-    parameters->Set("DLSSNR.DepthInverted", depthInverted ? 1u : 0u);
-    parameters->Set("DLSSNR.Reset", state.reset ? 1u : 0u);
-    SetModelRegions(parameters, { width, height }, guides);
-    parameters->Set("DLSSNR.MVecScaleX", mvX);
-    parameters->Set("DLSSNR.MVecScaleY", mvY);
-    SetModelTuning(parameters, Profiles::PassSettings(config, passIndex));
-    parameters->Set("DLSSNR.ControlMask", static_cast<void*>(nullptr));
-    return NVNGXProxy::VULKAN_EvaluateFeature()(commandBuffer, model.feature, parameters, nullptr);
-}
-
 bool ModelVk::Impl::FormatCanHoldLinearHdr(VkFormat format)
 {
     switch (format)

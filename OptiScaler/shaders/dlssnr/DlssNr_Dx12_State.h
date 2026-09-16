@@ -1,5 +1,4 @@
 #pragma once
-#include "DlssNr_Dx12_ModelState.h"
 #include <dlssnr/DlssNr_Placement.h>
 #include <dlssnr/DlssNr_FinishedReady.h>
 #include <dlssnr/PassProfiles.h>
@@ -46,7 +45,28 @@ using DlssNr::CopyTexture;
 struct DlssNr_Dx12::State
 {
 
-    DlssNr::Detail::ModelStateDx12 nr;
+    struct ModelState
+    {
+        DlssNr::Proxy::Context models[DlssNr::MaxPassCount]; // Independent model histories.
+        // Immutable full-resolution inputs; working-resolution model outputs ping-pong through a clamp.
+        ID3D12Resource *colorCopy = nullptr, *hdrCopy = nullptr;
+        ID3D12Resource *output = nullptr, *passScratch = nullptr, *passClamp = nullptr;
+        ID3D12Resource* activeColor = nullptr; // Compact pre-SR raster when the game allocation is padded.
+        ID3D12Resource* colorSmall = nullptr;
+
+        // Optional supersampling filters and their native-resolution result.
+        OS_Dx12 *superUp = nullptr, *superDown = nullptr;
+        ID3D12Resource* outputNative = nullptr;
+        Scaler nrScaler = Scaler::Count;
+
+        ID3D12Resource* heldColor = nullptr;
+        float heldWhitePoint = 1.0f;
+        ID3D12Resource *depthClone = nullptr, *motionClone = nullptr; // Typed copies for NGX.
+        unsigned width = 0, height = 0, workWidth = 0, workHeight = 0;
+        bool beforeUpscale = false, rayReconstruction = false, reset = true;
+        bool failed = false; // Latched until retry.
+        const char* reason = "";
+    } nr;
     DlssNr_Dx12& shader;
     struct Enlarger
     {
@@ -136,8 +156,8 @@ struct DlssNr_Dx12::State
 
     // Typeless guides are copied into a typed resource for NGX. The clone rests in COPY_DEST.
     // Return the original typed resource when no conversion is required.
-    ID3D12Resource* ReadableGuide(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList, ID3D12Resource* source,
-                                  ID3D12Resource** clone);
+    ID3D12Resource* ReadableGuide(ID3D12Device* device, DlssNr::ResourceStates_Dx12& states,
+                                  ID3D12Resource* source, ID3D12Resource** clone);
 
     // Try both SR and ray-reconstruction parameter names; absent values return null.
 

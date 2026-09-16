@@ -11,18 +11,7 @@ namespace DlssNr
 {
 namespace Proxy
 {
-// Borrowed inputs for one model evaluation; depth and motion retain independent active regions.
-struct Frame
-{
-    ID3D12Resource* color = nullptr;
-    ID3D12Resource* depth = nullptr;
-    ID3D12Resource* motion = nullptr;
-    ID3D12Resource* output = nullptr;
-    GuideExtent size {};
-    GuideRegions guides {};
-    bool depthInverted = false, reset = false;
-    float mvScaleX = 1.0f, mvScaleY = 1.0f;
-};
+using Frame = ModelFrame<ID3D12Resource>;
 
 class Context
 {

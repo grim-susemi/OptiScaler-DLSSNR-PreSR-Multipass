@@ -164,28 +164,7 @@ unsigned int Context::Evaluate(ID3D12GraphicsCommandList* cmdList, const Frame& 
     auto& lifetime = _impl->lifetime;
     NVSDK_NGX_Parameter* params = state.params;
 
-    params->Set("DLSSNR.Color", frame.color);
-    params->Set("DLSSNR.Depth", frame.depth);
-    params->Set("DLSSNR.MVec", frame.motion);
-    params->Set("DLSSNR.Output", frame.output);
-
-    params->Set("DLSSNR.Enabled", 1u);
-    params->Set("DLSSNR.Width", frame.size.width);
-    params->Set("DLSSNR.Height", frame.size.height);
-    params->Set("DLSSNR.DepthInverted", frame.depthInverted ? 1u : 0u);
-    params->Set("DLSSNR.Reset", (frame.reset || state.reset) ? 1u : 0u);
-
-    // Colour and output are display resolution; depth and motion come from the game's own DLSS
-    // evaluation and may be render resolution, so each resource carries its own subrect.
-    SetModelRegions(params, frame.size, frame.guides);
-
-    // The game's own encoding, passed through. Deriving this from the resolutions was a guess, and
-    // at native resolution it came out as exactly 1.0 -- so a game using normalised vectors was
-    // telling the model that almost nothing had moved.
-    params->Set("DLSSNR.MVecScaleX", frame.mvScaleX);
-    params->Set("DLSSNR.MVecScaleY", frame.mvScaleY);
-
-    DlssNr::SetModelTuning(params, state.settings);
+    SetModelEvaluation(params, frame, state.settings, state.reset);
 
     lifetime.Record(cmdList);
     const auto result = state.compatibility ? state.compatibility->Evaluate(cmdList, state.feature, params)

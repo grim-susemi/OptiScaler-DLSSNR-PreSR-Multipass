@@ -3,6 +3,7 @@
 #include "DlssNrFeature_Vk_Internal.h"
 #include "DlssNr_Placement.h"
 #include "DlssNrPipeline_Vk.h"
+#include <proxies/NVNGX_Proxy.h>
 #include <algorithm>
 #include <cmath>
 
@@ -253,10 +254,15 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     // The model
     // -----------------------------------------------------------------------------------------
 
-    float mvX = frame.MvScaleX, mvY = frame.MvScaleY;
-    // Match D3D12: preserve the game's vector encoding, then adjust only for the NR working scale.
-    mvX *= (float) workWidth / width;
-    mvY *= (float) workHeight / height;
+    ModelFrame<void> modelFrame;
+    modelFrame.depth = &depthResource;
+    modelFrame.motion = &motionResource;
+    modelFrame.size = { workWidth, workHeight };
+    modelFrame.guides = guides;
+    modelFrame.depthInverted = depthInverted;
+    modelFrame.reset = state.reset;
+    modelFrame.mvScaleX = frame.MvScaleX * ((float) workWidth / width);
+    modelFrame.mvScaleY = frame.MvScaleY * ((float) workHeight / height);
     ImageVk* answer = &state.output;
     ImageVk* input = modelInput;
     uint32_t clampSlots[2] = { UINT32_MAX, UINT32_MAX };
@@ -267,8 +273,12 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
         Transition(cmdBuffer, *answer, VK_IMAGE_LAYOUT_GENERAL);
         auto inputResource = WrapImage(input->info, true);
         auto answerResource = WrapImage(answer->info, true);
-        evaluated = EvaluateModel(cmdBuffer, pass, &inputResource, &depthResource, &motionResource, &answerResource,
-                                  workWidth, workHeight, guides, depthInverted, mvX, mvY, cfg);
+        modelFrame.color = &inputResource;
+        modelFrame.output = &answerResource;
+        auto& model = state.models[pass];
+        SetModelEvaluation(model.parameters, modelFrame, Profiles::PassSettings(cfg, pass));
+        model.parameters->Set("DLSSNR.ControlMask", static_cast<void*>(nullptr));
+        evaluated = NVNGXProxy::VULKAN_EvaluateFeature()(cmdBuffer, model.feature, model.parameters, nullptr);
         if (evaluated != NVSDK_NGX_Result_Success)
             break;
         if (pass + 1 < passes)

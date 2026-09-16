@@ -144,9 +144,9 @@ bool DlssNr_Dx12::DispatchCompute(ID3D12GraphicsCommandList* InCmdList, const Dl
                                  ID3D12Resource* InMotion,
                                  ID3D12Resource* OutTarget, ID3D12Resource* OutKeep, uint32_t* immutableSlot)
 {
-    _state->lifetime.Record(InCmdList);
-    if (!_init || !pipeline || !InCmdList || !_device || !InSource || !OutTarget)
+    if (!_init || !pipeline)
         return false;
+    _state->lifetime.Record(InCmdList);
 
     const bool reuse = immutableSlot && *immutableSlot != UINT32_MAX;
     const uint32_t slot = reuse ? *immutableSlot : _heapIndex;

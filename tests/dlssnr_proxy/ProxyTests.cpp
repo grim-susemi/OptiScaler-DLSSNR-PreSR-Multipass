@@ -125,6 +125,19 @@ int main()
     assert(run() == NVSDK_NGX_Result_Success && evaluated);
     assert(value.operator()<unsigned int>("DLSSNR.Reset") == 0);
 
+    // Vulkan shares scalar/guide metadata but NGX requires void-pointer resource setters.
+    Mock::Params vkParameters;
+    const DlssNr::ModelFrame<void> vkFrame { &color, &depth, &motion, &output, { 1920, 1080 },
+        { { 12, 24, 1280, 720 }, { 32, 48, 1920, 1080 } }, true, false, 0.5f, -0.25f };
+    DlssNr::SetModelEvaluation(&vkParameters, vkFrame, settings);
+    for (const auto& [key, field] : vkParameters.values)
+    {
+        if (std::holds_alternative<void*>(field))
+            assert(std::get<void*>(field) == std::get<ID3D12Resource*>(Mock::latest->values.at(key)));
+        else
+            assert(field == Mock::latest->values.at(key));
+    }
+
     // Creation-time tuning edits rebuild; the previous GPU feature/map survive the retirement window.
     settings.preset = 2;
     assert(run() == NVSDK_NGX_Result_Success && !evaluated);

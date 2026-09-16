@@ -60,8 +60,8 @@ auto DlssNr_Dx12::State::CreateGuideClone(ID3D12Device* device, ID3D12Resource* 
     return res;
 }
 
-auto DlssNr_Dx12::State::ReadableGuide(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList, ID3D12Resource* source,
-                                  ID3D12Resource** clone) -> ID3D12Resource*
+auto DlssNr_Dx12::State::ReadableGuide(ID3D12Device* device, DlssNr::ResourceStates_Dx12& states,
+                                      ID3D12Resource* source, ID3D12Resource** clone) -> ID3D12Resource*
 {
     const auto want = source->GetDesc();
     const auto format = TypedGuideFormat(want.Format);
@@ -80,10 +80,9 @@ auto DlssNr_Dx12::State::ReadableGuide(ID3D12Device* device, ID3D12GraphicsComma
     if (!*clone)
         return nullptr;
 
-    Barrier(cmdList, source, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    cmdList->CopyResource(*clone, source);
-    Barrier(cmdList, source, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    Barrier(cmdList, *clone, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    CopyTexture(states.commands, *clone, D3D12_RESOURCE_STATE_COPY_DEST,
+                source, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    states.Read(*clone, D3D12_RESOURCE_STATE_COPY_DEST);
     return *clone;
 }
 

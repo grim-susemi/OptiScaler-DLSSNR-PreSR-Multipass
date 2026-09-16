@@ -53,34 +53,40 @@ struct InputStates_Dx12
     D3D12_RESOURCE_STATES exposure;
 };
 
-// Return each borrowed input to its arrival state, once even when guides alias.
-struct ReadableInputs_Dx12
+// Track transitions within one pass and restore arrival states, including aliased inputs.
+struct ResourceStates_Dx12
 {
     ID3D12GraphicsCommandList* commands;
     std::vector<D3D12_RESOURCE_BARRIER> barriers;
 
-    void Read(ID3D12Resource* resource, D3D12_RESOURCE_STATES state)
+    void Set(ID3D12Resource* resource, D3D12_RESOURCE_STATES state,
+             D3D12_RESOURCE_STATES arrival = D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
     {
-        if (!resource || std::any_of(barriers.begin(), barriers.end(),
-                                    [resource](const auto& b) { return b.Transition.pResource == resource; }))
+        if (!resource)
             return;
-        D3D12_RESOURCE_BARRIER barrier {};
-        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        barrier.Transition = { resource, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, state,
-                               D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE };
-        barriers.push_back(barrier);
-        if (state != D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
-            commands->ResourceBarrier(1, &barrier);
+        auto it = std::find_if(barriers.begin(), barriers.end(),
+                               [resource](const auto& b) { return b.Transition.pResource == resource; });
+        if (it == barriers.end())
+        {
+            D3D12_RESOURCE_BARRIER barrier {};
+            barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            barrier.Transition = { resource, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, arrival, arrival };
+            it = barriers.insert(it, barrier);
+        }
+        Barrier(commands, resource, it->Transition.StateAfter, state);
+        it->Transition.StateAfter = state;
     }
-    ~ReadableInputs_Dx12()
+    void Read(ID3D12Resource* resource, D3D12_RESOURCE_STATES arrival = D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+    {
+        Set(resource, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, arrival);
+    }
+    void Restore()
     {
         for (auto it = barriers.rbegin(); it != barriers.rend(); ++it)
-        {
-            std::swap(it->Transition.StateBefore, it->Transition.StateAfter);
-            if (it->Transition.StateBefore != it->Transition.StateAfter)
-                commands->ResourceBarrier(1, &*it);
-        }
+            Barrier(commands, it->Transition.pResource, it->Transition.StateAfter, it->Transition.StateBefore);
+        barriers.clear();
     }
+    ~ResourceStates_Dx12() { Restore(); }
 };
 
 // Shared arrival-state policy for NR input copies and private upscaler guides.

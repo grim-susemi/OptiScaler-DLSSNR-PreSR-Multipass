@@ -83,6 +83,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     if (!PrepareRunModels(cmdList, device, frame, desc, { width, height },
                            { workWidth, workHeight }, workScale, requestedPasses))
         return false;
+    DlssNr::ResourceStates_Dx12 resources { cmdList };
     // The parameter adapter already combined the HDR flag with the active color format.
     const bool isHdrBuffer = frame.ColourIsLinearHdr;
 
@@ -160,10 +161,8 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     if (targetSupportsUav)
         TransitionTarget(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     // The transitions double as the wait for the encode's writes.
-    Barrier(cmdList, nr.colorCopy, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    Barrier(cmdList, nr.hdrCopy, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    resources.Read(nr.colorCopy);
+    resources.Read(nr.hdrCopy);
 
     // Below full resolution the model is shown a filtered shrink of the proxy; the edit it returns is
     // enlarged during the resolve while the frame underneath stays full size and untouched.
@@ -188,11 +187,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
                 nr.superDown = new OS_Dx12("DLSS-NR supersample down", device, false, nrScaler);
 
             if (nr.superUp->DispatchResources(cmdList, nr.colorCopy, nr.colorSmall))
-            {
-                Barrier(cmdList, nr.colorSmall, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                 built = true;
-            }
         }
 
         if (!built)
@@ -210,15 +205,14 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
             down.Height = workHeight;
             shader.DispatchPass(cmdList, down, modelInput, nullptr, nullptr, nullptr, nr.colorSmall,
                                 nullptr);
-            Barrier(cmdList, nr.colorSmall, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         }
 
+        resources.Read(nr.colorSmall);
         modelInput = nr.colorSmall;
     }
 
-    ID3D12Resource* depthIn = ReadableGuide(device, cmdList, depth, &nr.depthClone);
-    ID3D12Resource* motionIn = ReadableGuide(device, cmdList, motion, &nr.motionClone);
+    ID3D12Resource* depthIn = ReadableGuide(device, resources, depth, &nr.depthClone);
+    ID3D12Resource* motionIn = ReadableGuide(device, resources, motion, &nr.motionClone);
 
     if (depthIn == nullptr || motionIn == nullptr)
     {
@@ -242,23 +236,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     ID3D12Resource* passInput = modelInput;
     ID3D12Resource* passOutput = nr.output;
     ID3D12Resource* finalAnswer = nullptr;
-    bool outputReadable = false;
-    bool scratchReadable = false;
-    bool clampReadable = false;
     uint32_t clampSlots[2] = { UINT32_MAX, UINT32_MAX };
-
-    const auto SetModelReadable = [&](ID3D12Resource* resource, bool next)
-    {
-        bool& readable = resource == nr.output      ? outputReadable
-                         : resource == nr.passClamp ? clampReadable
-                                                    : scratchReadable;
-        if (readable == next)
-            return;
-        const auto read = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
-        const auto write = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-        Barrier(cmdList, resource, readable ? read : write, next ? read : write);
-        readable = next;
-    };
 
     int result = NVSDK_NGX_Result_Success;
     const bool enlargementReset = nr.reset;
@@ -276,7 +254,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
 
     for (unsigned int pass = 0; pass < requestedPasses; ++pass)
     {
-        SetModelReadable(passOutput, false);
+        resources.Set(passOutput, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         modelFrame.color = passInput;
         modelFrame.output = passOutput;
         result = nr.models[pass].Evaluate(cmdList, modelFrame);
@@ -285,11 +263,11 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
             break;
 
         finalAnswer = passOutput;
-        SetModelReadable(finalAnswer, true);
+        resources.Read(finalAnswer);
 
         if (pass + 1 < requestedPasses)
         {
-            SetModelReadable(nr.passClamp, false);
+            resources.Set(nr.passClamp, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             DlssNrConstants clamp {};
             clamp.Mode = DlssNrMode_ClampProxy;
             clamp.Width = workWidth;
@@ -300,7 +278,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
                 result = NVSDK_NGX_Result_Fail;
                 break;
             }
-            SetModelReadable(nr.passClamp, true);
+            resources.Read(nr.passClamp);
             passInput = nr.passClamp;
             passOutput = passOutput == nr.output ? nr.passScratch : nr.output;
         }
@@ -327,8 +305,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         if (workScale > 1.0f && nr.superDown != nullptr &&
             nr.superDown->DispatchResources(cmdList, finalAnswer, nr.outputNative))
         {
-            Barrier(cmdList, nr.outputNative, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            resources.Read(nr.outputNative);
             superDownOk = true;
         }
 
@@ -356,14 +333,9 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
             targetSupportsUav ? target : nr.hdrCopy;
 
         if (targetSupportsUav)
-        {
             TransitionTarget(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        }
         else
-        {
-            Barrier(cmdList, nr.hdrCopy, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        }
+            resources.Set(nr.hdrCopy, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
         const bool resolved = enlargementReady && shader.DispatchPass(cmdList, resolveParams, resolveProxy, resolveAnswer,
                                                   resolveOriginal, motionIn, resolveTarget, nullptr);
@@ -371,24 +343,12 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
 
         if (resolved && !targetSupportsUav)
         {
-            Barrier(cmdList, nr.hdrCopy, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            resources.Set(nr.hdrCopy, D3D12_RESOURCE_STATE_COPY_SOURCE);
             const D3D12_RESOURCE_STATES priorTargetState = targetState;
             TransitionTarget(D3D12_RESOURCE_STATE_COPY_DEST);
             cmdList->CopyResource(target, nr.hdrCopy);
             TransitionTarget(priorTargetState);
-            Barrier(cmdList, nr.hdrCopy, D3D12_RESOURCE_STATE_COPY_SOURCE,
-                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         }
-        else if (!targetSupportsUav)
-        {
-            // Restore the resolve target even while the private upscaler is warming up.
-            Barrier(cmdList, nr.hdrCopy, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-        }
-
-        if (superDownOk)
-            Barrier(cmdList, nr.outputNative, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
         // Schedule matched proxy/output capture for delayed readback.
         if (captureFrames.isActive())
@@ -406,38 +366,10 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         LOG_ERROR("DLSS-NR evaluate returned 0x{:X}; use Retry to recreate the model", (uint32_t) result);
     }
 
-    // Restore all intermediate surfaces to the UAV state expected by the next frame.
-    SetModelReadable(nr.output, false);
-    if (nr.passScratch != nullptr)
-        SetModelReadable(nr.passScratch, false);
-
-    Barrier(cmdList, nr.hdrCopy, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-
-    if (nr.passClamp != nullptr)
-        SetModelReadable(nr.passClamp, false);
-
     // Failed evaluations leave the game's original image intact. A successful copy-back writes
     // only the active rectangle and restores both resources before DLSS consumes the image.
     FinishColor(compositionSucceeded);
-
+    resources.Restore();
     EndGpuTiming(cmdList);
-
-    // Restore guide clones to COPY_DEST for the next frame's refresh.
-    if (depthIn == nr.depthClone)
-        Barrier(cmdList, nr.depthClone, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-                D3D12_RESOURCE_STATE_COPY_DEST);
-
-    if (motionIn == nr.motionClone)
-        Barrier(cmdList, nr.motionClone, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-                D3D12_RESOURCE_STATE_COPY_DEST);
-
-    if (reduced)
-        Barrier(cmdList, nr.colorSmall, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-
-    // Leave the staging copy as the next frame expects to find it.
-    Barrier(cmdList, nr.colorCopy, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     return compositionSucceeded;
 }

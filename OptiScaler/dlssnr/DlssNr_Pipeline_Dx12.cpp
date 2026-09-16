@@ -130,7 +130,7 @@ ShaderPass_Dx12 MakeDlssNrPass(DlssNr_Dx12& shader, ID3D12Device* device, ID3D12
         [=, &shader](ID3D12Resource* input, ID3D12Resource* output) -> bool
         {
             // Every guide is returned to the upscaler's input state, including failed NR evaluations.
-            DlssNr::ReadableInputs_Dx12 restore { commandList };
+            DlssNr::ResourceStates_Dx12 restore { commandList };
 
             if (beforeUpscale)
             {

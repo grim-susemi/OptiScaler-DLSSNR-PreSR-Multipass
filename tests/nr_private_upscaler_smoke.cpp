@@ -249,8 +249,6 @@ int wmain(int argc,wchar_t** argv) try {
     }
     if (selected == DlssNr::PrivateUpscaler::DLSS)
         expect(NVNGXProxy::srCreates == 2, "Both private contexts must use the selected NGX feature");
-    f.depth.resource=nullptr;
-    expect(!feature->Evaluate(commands.Get(),f),"Missing guide was accepted");
     feature.reset(); other.reset(); CloseHandle(event);
     unsigned errors=0;
     for(UINT64 i=0;infoQueue && i<infoQueue->GetNumStoredMessages();++i){

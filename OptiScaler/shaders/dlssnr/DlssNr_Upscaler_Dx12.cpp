@@ -290,20 +290,15 @@ struct PrivateUpscalerDx12::Impl
         auto* depth = f.depth.resource;
         auto* motion = f.motion.resource;
         auto* exposure = f.exposure.resource;
-        if (!color || !output || !depth || !motion || !exposure ||
-            f.width != width || f.height != height || f.outputWidth != outWidth || f.outputHeight != outHeight)
-            return false;
-        if (rayReconstruction && (!f.rr.valid || f.rr.roughnessMode != roughnessMode ||
-                                   f.rr.hardwareDepth != hardwareDepth)) return false;
-        ReadableInputs_Dx12 inputs { cmd };
+        ResourceStates_Dx12 inputs { cmd };
         for (auto input : { f.color, f.depth, f.motion, f.exposure })
             inputs.Read(input.resource, input.state);
         if (rayReconstruction)
             for (auto input : f.rr.guides)
                 inputs.Read(input.resource, input.state);
-        Barrier(cmd, output, f.output.state, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        inputs.Set(output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, f.output.state);
         bool result = false;
-        if (backend == PrivateUpscaler::DLSS && feature)
+        if (backend == PrivateUpscaler::DLSS)
         {
             auto* p = parameters;
             p->Set(NVSDK_NGX_Parameter_Color, color);
@@ -340,7 +335,7 @@ struct PrivateUpscalerDx12::Impl
             result = evaluated == NVSDK_NGX_Result_Success;
             if (!result) NgxError("EvaluateFeature", evaluated);
         }
-        else if (backend == PrivateUpscaler::FSR22 && fsr2Ready)
+        else if (backend == PrivateUpscaler::FSR22)
         {
             FfxFsr2DispatchDescription d {};
             d.commandList = ffxGetCommandListDX12(cmd);
@@ -352,7 +347,7 @@ struct PrivateUpscalerDx12::Impl
             FrameParameters(d, f);
             result = ffxFsr2ContextDispatch(&fsr2, &d) == FFX_OK;
         }
-        else if (backend == PrivateUpscaler::FFX && ffx)
+        else if (backend == PrivateUpscaler::FFX)
         {
             ffxDispatchDescUpscale d {};
             d.header.type = FFX_API_DISPATCH_DESC_TYPE_UPSCALE;
@@ -366,7 +361,7 @@ struct PrivateUpscalerDx12::Impl
             FrameParameters(d, f);
             result = FfxApiProxy::D3D12_Dispatch(&ffx, &d.header) == FFX_API_RETURN_OK;
         }
-        else if (backend == PrivateUpscaler::XeSS && xess)
+        else if (backend == PrivateUpscaler::XeSS)
         {
             xess_d3d12_execute_params_t d {};
             d.pColorTexture = color;
@@ -385,7 +380,6 @@ struct PrivateUpscalerDx12::Impl
                                               f.motionScaleY) == XESS_RESULT_SUCCESS &&
                 XeSSProxy::D3D12Execute()(xess, cmd, &d) == XESS_RESULT_SUCCESS;
         }
-        Barrier(cmd, output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, f.output.state);
         return result;
     }
 };

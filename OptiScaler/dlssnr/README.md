@@ -26,15 +26,18 @@ Paths are relative to `OptiScaler/dlssnr` unless prefixed with `shaders/`, which
 | `DlssNr_Pipeline_Dx12.*`, `DlssNrPipeline_Vk.h` | Upscaler adapters |
 | `DlssNrFeature_Vk*`, `DlssNrFinished_Vk*` | Native Vulkan model/resources/presentation |
 | `DlssNr_Menu.cpp`, `DlssNr_MenuControls.cpp`, `DlssNr_MenuOverlay.*`, `DlssNr_PipelineUi.h` | Menu routing/status, controls, comparison tags and chart |
-| `shaders/dlssnr/DlssNr_Dx12_{Run,Encode}*` | Frame processing and composition |
+| `shaders/dlssnr/DlssNr_Dx12_Run.cpp` | Encoding, model execution and composition |
 | `shaders/dlssnr/DlssNr_Dx12_{Models,Resources,State,ModelState}*` | Model/resource ownership |
 | `shaders/dlssnr/DlssNr_Dx12_{DeferredSr,Enlarge}*`, `shaders/dlssnr/DlssNr_Upscaler_Dx12*` | Private upscaling |
 | `shaders/dlssnr/DlssNr_Dx12_{Late,FinishedQueue,FinishedCompose}*` | Capture, submission and presentation |
 | `shaders/dlssnr/DlssNr_Dx12_Hold*` | Held inputs |
-| `shaders/dlssnr/DlssNr_Common.h`, `shaders/dlssnr/precompile/*.hlsl` | Shared codec contract and shaders |
+| `shaders/dlssnr/DlssNr_Common.h`, `shaders/dlssnr/precompile/*.{hlsl,hlsli}` | Shared codec contract and shaders |
 
 D3D12 completion markers protect retirement; CPU frame counts only pair logical frames. Replaced owners stay registered until recordings and GPU work finish. Unresolved teardown work remains alive for process exit. Vulkan drains before resource replacement and separates creation/evaluation with events. See [GPU lifetime](../../docs/NR-GPU-RETIREMENT.md).
 
+
+The model menu's **Edit pass** selector exposes all 30 profiles, independently of the active pass count.
+Inactive profiles can be prepared in advance; later passes inherit pass 1 except for Local tone, which defaults to zero.
 
 ## Validation
 

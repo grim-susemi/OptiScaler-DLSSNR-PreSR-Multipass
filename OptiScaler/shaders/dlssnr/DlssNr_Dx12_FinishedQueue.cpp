@@ -30,7 +30,7 @@ auto DlssNr_Dx12::State::FinishedPictureResetCommandList(ID3D12CommandList* cmd)
     {
         inputHold.active = false; // recording was discarded before submission
         inputHold.captureCommands = nullptr;
-        nr.heldActive = false;
+        ParkNrResource(nr.heldColor);
     }
     if (gpuTime)
         gpuTime->ResetRecording(cmd);

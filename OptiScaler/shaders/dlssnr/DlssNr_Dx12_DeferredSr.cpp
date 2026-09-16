@@ -278,7 +278,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
             Say("private exposure initialization failed");
             return;
         }
-        owner.Barrier(cmd, g.exposure, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        Barrier(cmd, g.exposure, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         g.createEpoch = submittedEpoch;
         Say(std::string("private ") + g.upscaler->Name() +
@@ -294,11 +294,11 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
 
     const auto inputStates = DlssNr::ResolveInputStates_Dx12(interop);
     const auto arrival = inputStates.color;
-    owner.Barrier(cmd, color, arrival, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    owner.Barrier(cmd, g.edited, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
+    Barrier(cmd, color, arrival, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    Barrier(cmd, g.edited, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
     CopyActiveColor(cmd, g.edited, color, *active);
-    owner.Barrier(cmd, color, D3D12_RESOURCE_STATE_COPY_SOURCE, arrival);
-    owner.Barrier(cmd, g.edited, D3D12_RESOURCE_STATE_COPY_DEST,
+    Barrier(cmd, color, D3D12_RESOURCE_STATE_COPY_SOURCE, arrival);
+    Barrier(cmd, g.edited, D3D12_RESOURCE_STATE_COPY_DEST,
                   D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
     DlssNrFrameInfo frame {};
@@ -340,16 +340,16 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
     {
         ScopedNrStateEnvelope envelope(cmd);
         if (g.smallReadable)
-            owner.Barrier(cmd, g.residualInput, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+            Barrier(cmd, g.residualInput, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        owner.Barrier(cmd, color, arrival, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        Barrier(cmd, color, arrival, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         bool accumulated = true;
         if (g.rayReconstruction)
         {
             if (!g.accumulationReadable)
             {
                 for (auto* history : g.accumulatedEdit)
-                    owner.Barrier(cmd, history, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                    Barrier(cmd, history, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                                   D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                 g.accumulationReadable = true;
             }
@@ -360,10 +360,10 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
                                                  : DlssNr::GuideExtent { g.outW, g.outH }, 0, 0);
             const unsigned next = g.accumulatedIndex ^ 1u;
             auto* history = g.accumulatedEdit[next];
-            owner.Barrier(cmd, history, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+            Barrier(cmd, history, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             if (motion != color)
-                owner.Barrier(cmd, motion, inputStates.motion, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                Barrier(cmd, motion, inputStates.motion, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             DlssNrConstants accum {};
             accum.Mode = DlssNrResidualMode_Accumulate;
             accum.Width = g.w; accum.Height = g.h;
@@ -377,8 +377,8 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
             accumulated = motionRegion.valid() && g.codec->DispatchResidualPass(cmd, accum, color, g.edited,
                 g.accumulatedEdit[g.accumulatedIndex], motion, history);
             if (motion != color)
-                owner.Barrier(cmd, motion, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, inputStates.motion);
-            owner.Barrier(cmd, history, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                Barrier(cmd, motion, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, inputStates.motion);
+            Barrier(cmd, history, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             if (accumulated)
             {
@@ -388,10 +388,10 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
                 DlssNrConstants compose {};
                 compose.Mode = DlssNrResidualMode_Apply;
                 compose.Width = g.w; compose.Height = g.h; compose.TransferStrength = 1;
-                owner.Barrier(cmd, g.edited, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                Barrier(cmd, g.edited, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                               D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
                 accumulated = g.codec->DispatchResidualPass(cmd, compose, color, history, nullptr, nullptr, g.edited);
-                owner.Barrier(cmd, g.edited, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                Barrier(cmd, g.edited, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                               D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                 g.accumulatedIndex = next;
             }
@@ -421,8 +421,8 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
         else
             ok = g.codec->DispatchPass(cmd, encode, color, g.edited, nullptr, nullptr, g.residualInput,
                                        nullptr);
-        owner.Barrier(cmd, color, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, arrival);
-        owner.Barrier(cmd, g.residualInput, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        Barrier(cmd, color, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, arrival);
+        Barrier(cmd, g.residualInput, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         g.smallReadable = true;
         if (ok)
@@ -468,7 +468,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
         g.reset = true;
         Say("waiting for NR evaluation; clean SR frame retained");
     }
-    owner.Barrier(cmd, g.edited, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+    Barrier(cmd, g.edited, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                   D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 }
 
@@ -522,15 +522,15 @@ auto DlssNr_Dx12::State::DeferredSrContext::After(ID3D12GraphicsCommandList* cmd
         return; // The finished-picture path owns composition; the game's SR output stays clean.
     }
 
-    owner.Barrier(cmd, g.residualOutput, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+    Barrier(cmd, g.residualOutput, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                   D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     const auto arrival = cfg.OutputResourceBarrier.has_value()
                              ? (D3D12_RESOURCE_STATES) cfg.OutputResourceBarrier.value()
                              : D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-    owner.Barrier(cmd, pair.output, arrival, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    owner.Barrier(cmd, g.clean, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
+    Barrier(cmd, pair.output, arrival, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    Barrier(cmd, g.clean, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
     cmd->CopyResource(g.clean, pair.output);
-    owner.Barrier(cmd, g.clean, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    Barrier(cmd, g.clean, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     DlssNrConstants apply {};
     apply.Mode = DlssNrMode_ApplyResidual;
     apply.Width = g.outW;
@@ -540,11 +540,11 @@ auto DlssNr_Dx12::State::DeferredSrContext::After(ID3D12GraphicsCommandList* cmd
                                           g.composed, nullptr);
     if (ok)
     {
-        owner.Barrier(cmd, g.composed, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
-        owner.Barrier(cmd, pair.output, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+        Barrier(cmd, g.composed, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        Barrier(cmd, pair.output, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
         cmd->CopyResource(pair.output, g.composed);
-        owner.Barrier(cmd, pair.output, D3D12_RESOURCE_STATE_COPY_DEST, arrival);
-        owner.Barrier(cmd, g.composed, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        Barrier(cmd, pair.output, D3D12_RESOURCE_STATE_COPY_DEST, arrival);
+        Barrier(cmd, g.composed, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         Say("running: " + std::to_string(g.w) + "x" + std::to_string(g.h) +
             " contribution -> private " + g.upscaler->Name() + " -> " +
             std::to_string(g.outW) + "x" + std::to_string(g.outH) +
@@ -552,13 +552,13 @@ auto DlssNr_Dx12::State::DeferredSrContext::After(ID3D12GraphicsCommandList* cmd
     }
     else
     {
-        owner.Barrier(cmd, pair.output, D3D12_RESOURCE_STATE_COPY_SOURCE, arrival);
+        Barrier(cmd, pair.output, D3D12_RESOURCE_STATE_COPY_SOURCE, arrival);
         g.reset = true;
         Say("composition failed; clean frame retained");
     }
-    owner.Barrier(cmd, g.clean, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+    Barrier(cmd, g.clean, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                   D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    owner.Barrier(cmd, g.residualOutput, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+    Barrier(cmd, g.residualOutput, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                   D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 }
 

@@ -47,20 +47,7 @@ void DestroyState(ProxyState& state)
 void SetCreationParameters(NVSDK_NGX_Parameter* params, const DlssNr::ModelSettings& settings, unsigned int width,
                            unsigned int height)
 {
-    params->Set("DLSSNR.Enabled", 1u);
-    params->Set("DLSSNR.Width", width);
-    params->Set("DLSSNR.Height", height);
-    params->Set("CreationNodeMask", 1u);
-    params->Set("VisibilityNodeMask", 1u);
-
-    // Set the default preset explicitly, too.
-    params->Set("DLSSNR.Hint.Render.Preset", (unsigned int) settings.preset);
-
-    DlssNr::SetModelTuning(params, settings);
-
-    // UI correction at the model's own default: with no UI layer fed to it there is nothing to
-    // correct.
-    params->Set("DLSSNR.UICorrection", 1u);
+    DlssNr::SetModelCreation(params, settings, width, height);
     params->Set("DLSSNR.ControlMask", static_cast<ID3D12Resource*>(nullptr));
     params->Set("DLSSNR.UI", static_cast<ID3D12Resource*>(nullptr));
     params->Set("DLSSNR.UIAlpha", static_cast<ID3D12Resource*>(nullptr));
@@ -137,7 +124,6 @@ unsigned int Context::Prepare(ID3D12GraphicsCommandList* cmdList, ID3D12Device* 
     if (state.feature == nullptr)
     {
         NgxDiagnostics::Scope nrCreateTrace;
-        NgxDiagnostics::RuntimeReport(cmdList, device, "before CreateFeature(18)");
         LOG_INFO("NR diagnostic creation: {}x{}, preset={}, style={}, intensity={}, structure={}, tone={}, "
                  "skin={}, autoMask={}, node masks=1/1, UI correction=1, UI/control/backbuffer=null, epoch={}",
                  width, height, settings.preset, settings.style, settings.intensity, settings.localStructure,
@@ -159,7 +145,6 @@ unsigned int Context::Prepare(ID3D12GraphicsCommandList* cmdList, ID3D12Device* 
                          (unsigned)created, (void*)state.feature);
             }
         }
-        NgxDiagnostics::RuntimeReport(cmdList, device, "after CreateFeature(18)");
 
         if (created != NVSDK_NGX_Result_Success || state.feature == nullptr)
         {

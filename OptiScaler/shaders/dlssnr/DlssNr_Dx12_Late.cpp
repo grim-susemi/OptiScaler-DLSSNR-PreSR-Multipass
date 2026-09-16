@@ -153,10 +153,10 @@ auto DlssNr_Dx12::State::LateContext::Capture(ID3D12GraphicsCommandList* cmd, NV
     // shader-readable copies until both the producing queue and NR have finished.
     for (auto pair : { std::pair { depth, slot.depth.Get() }, std::pair { motion, slot.motion.Get() } })
     {
-        owner.Barrier(cmd, pair.first, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+        Barrier(cmd, pair.first, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                       D3D12_RESOURCE_STATE_COPY_SOURCE);
         cmd->CopyResource(pair.second, pair.first);
-        owner.Barrier(cmd, pair.first, D3D12_RESOURCE_STATE_COPY_SOURCE,
+        Barrier(cmd, pair.first, D3D12_RESOURCE_STATE_COPY_SOURCE,
                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         // The copy returns to COPY_DEST after the late dispatch.
     }
@@ -167,19 +167,10 @@ auto DlssNr_Dx12::State::LateContext::Capture(ID3D12GraphicsCommandList* cmd, NV
     params->Get(NVSDK_NGX_Parameter_Reset, &gameReset);
     frame.Reset = gameReset != 0;
     params->Get(NVSDK_NGX_Parameter_FrameTimeDeltaInMsec, &frame.FrameTimeMs);
-    frame.DepthInverted = (flags & NVSDK_NGX_DLSS_Feature_Flags_DepthInverted) != 0;
-    frame.MotionVectorsLowResolution = (flags & NVSDK_NGX_DLSS_Feature_Flags_MVLowRes) != 0;
+    DlssNr::ReadModelGuides(params, flags, frame);
     frame.RayReconstruction = rr;
     frame.OutputWidth = (unsigned) output->GetDesc().Width;
     frame.OutputHeight = output->GetDesc().Height;
-    params->Get(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Width, &frame.RenderSubrectWidth);
-    params->Get(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Height, &frame.RenderSubrectHeight);
-    params->Get(NVSDK_NGX_Parameter_DLSS_Input_Depth_Subrect_Base_X, &frame.DepthSubrectBaseX);
-    params->Get(NVSDK_NGX_Parameter_DLSS_Input_Depth_Subrect_Base_Y, &frame.DepthSubrectBaseY);
-    params->Get(NVSDK_NGX_Parameter_DLSS_Input_MV_SubrectBase_X, &frame.MotionSubrectBaseX);
-    params->Get(NVSDK_NGX_Parameter_DLSS_Input_MV_SubrectBase_Y, &frame.MotionSubrectBaseY);
-    params->Get(NVSDK_NGX_Parameter_MV_Scale_X, &frame.MvScaleX);
-    params->Get(NVSDK_NGX_Parameter_MV_Scale_Y, &frame.MvScaleY);
     frame.ColourIsLinearHdr = false;
     frame.IndependentCommands = true;
     frame.FinishedPicture = true;
@@ -200,9 +191,9 @@ auto DlssNr_Dx12::State::LateContext::CaptureResidual(ID3D12GraphicsCommandList*
         Say("The upscaled changes could not be saved.");
         return false;
     }
-    owner.Barrier(cmd, residual, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    Barrier(cmd, residual, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
     cmd->CopyResource(slot.residual.Get(), residual);
-    owner.Barrier(cmd, residual, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    Barrier(cmd, residual, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     slot.cleanSceneValid = false;
     if (Config::Instance()->DlssNrHdrTransfer.value_or_default() && sceneLinear &&
         Clone(slot.cleanScene, clean))
@@ -210,9 +201,9 @@ auto DlssNr_Dx12::State::LateContext::CaptureResidual(ID3D12GraphicsCommandList*
         const auto arrival = Config::Instance()->OutputResourceBarrier.has_value()
                                  ? (D3D12_RESOURCE_STATES) Config::Instance()->OutputResourceBarrier.value()
                                  : D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-        owner.Barrier(cmd, clean, arrival, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        Barrier(cmd, clean, arrival, D3D12_RESOURCE_STATE_COPY_SOURCE);
         cmd->CopyResource(slot.cleanScene.Get(), clean);
-        owner.Barrier(cmd, clean, D3D12_RESOURCE_STATE_COPY_SOURCE, arrival);
+        Barrier(cmd, clean, D3D12_RESOURCE_STATE_COPY_SOURCE, arrival);
         slot.cleanSceneValid = true;
     }
     if (!slot.cleanSceneValid)

@@ -7,6 +7,17 @@ class DlssNr_Dx12;
 
 namespace DlssNr
 {
+inline void Barrier(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource,
+                    D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after)
+{
+    if (before == after)
+        return;
+    D3D12_RESOURCE_BARRIER barrier {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition = { resource, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, before, after };
+    commands->ResourceBarrier(1, &barrier);
+}
+
 inline bool FormatCanHoldLinearHdr(DXGI_FORMAT format)
 {
     switch (format)

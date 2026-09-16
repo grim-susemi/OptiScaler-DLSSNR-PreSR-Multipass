@@ -1,6 +1,7 @@
 #include "pch.h"
 
 #include "DlssNr_Pipeline_Dx12.h"
+#include <dlssnr/DlssNr_ModelParameters.h>
 #include <Config.h>
 #include <State.h>
 #include <shaders/dlssnr/DlssNr_Dx12.h>
@@ -35,15 +36,6 @@ ID3D12Resource* NrResource(NVSDK_NGX_Parameter* parameters, const char* name, co
     if (resource == nullptr)
         resource = GetUpscalerResource_Dx12(parameters, fallback);
     return resource;
-}
-
-void NrBarrier(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource,
-               D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after)
-{
-    if (before == after)
-        return;
-    auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(resource, before, after);
-    commands->ResourceBarrier(1, &barrier);
 }
 
 } // namespace
@@ -95,8 +87,7 @@ ShaderPass_Dx12 MakeDlssNrPass(DlssNr_Dx12& shader, ID3D12Device* device, ID3D12
     frame.RayReconstruction = rayReconstruction;
     frame.SubmissionEpoch = submissionEpoch;
     frame.OutputArrivalState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-    frame.DepthInverted = (featureFlags & NVSDK_NGX_DLSS_Feature_Flags_DepthInverted) != 0;
-    frame.MotionVectorsLowResolution = (featureFlags & NVSDK_NGX_DLSS_Feature_Flags_MVLowRes) != 0;
+    DlssNr::ReadModelGuides(parameters, featureFlags, frame);
     frame.ColourIsLinearHdr = (featureFlags & NVSDK_NGX_DLSS_Feature_Flags_IsHDR) != 0;
     auto* finalOutput = NrResource(parameters, NVSDK_NGX_Parameter_Output, "DLSSD.Output");
     auto* colourAuthority = finalOutput != nullptr ? finalOutput : color;
@@ -119,17 +110,9 @@ ShaderPass_Dx12 MakeDlssNrPass(DlssNr_Dx12& shader, ID3D12Device* device, ID3D12
     parameters->Get(NVSDK_NGX_Parameter_Reset, &reset);
     frame.Reset = reset != 0;
     parameters->Get(NVSDK_NGX_Parameter_FrameTimeDeltaInMsec, &frame.FrameTimeMs);
-    parameters->Get(NVSDK_NGX_Parameter_MV_Scale_X, &frame.MvScaleX);
-    parameters->Get(NVSDK_NGX_Parameter_MV_Scale_Y, &frame.MvScaleY);
     parameters->Get(NVSDK_NGX_Parameter_DLSS_Pre_Exposure, &frame.PreExposure);
     if (frame.PreExposure <= 1e-6f)
         frame.PreExposure = 1.0f;
-    parameters->Get(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Width, &frame.RenderSubrectWidth);
-    parameters->Get(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Height, &frame.RenderSubrectHeight);
-    parameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Depth_Subrect_Base_X, &frame.DepthSubrectBaseX);
-    parameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Depth_Subrect_Base_Y, &frame.DepthSubrectBaseY);
-    parameters->Get(NVSDK_NGX_Parameter_DLSS_Input_MV_SubrectBase_X, &frame.MotionSubrectBaseX);
-    parameters->Get(NVSDK_NGX_Parameter_DLSS_Input_MV_SubrectBase_Y, &frame.MotionSubrectBaseY);
 
     return {
         [=, &shader](ID3D12Resource* nextOutput) -> ID3D12Resource*
@@ -169,9 +152,9 @@ ShaderPass_Dx12 MakeDlssNrPass(DlssNr_Dx12& shader, ID3D12Device* device, ID3D12
             {
                 // A disabled/failed optional pass must still provide the next stage with the original frame.
                 shader.SetBufferState(commandList, D3D12_RESOURCE_STATE_COPY_SOURCE);
-                NrBarrier(commandList, output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
+                DlssNr::Barrier(commandList, output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
                 commandList->CopyResource(output, input);
-                NrBarrier(commandList, output, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                DlssNr::Barrier(commandList, output, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             }
             return true;
         }

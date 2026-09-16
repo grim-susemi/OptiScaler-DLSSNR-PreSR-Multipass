@@ -32,20 +32,6 @@ auto DlssNr_Dx12::State::CreateScratch(ID3D12Device* device, DXGI_FORMAT format,
     return res;
 }
 
-auto DlssNr_Dx12::State::Barrier(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* res, D3D12_RESOURCE_STATES from,
-                 D3D12_RESOURCE_STATES to) -> void
-{
-    if (from == to)
-        return;
-    D3D12_RESOURCE_BARRIER b {};
-    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    b.Transition.pResource = res;
-    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    b.Transition.StateBefore = from;
-    b.Transition.StateAfter = to;
-    cmdList->ResourceBarrier(1, &b);
-}
-
 auto DlssNr_Dx12::State::TypedGuideFormat(DXGI_FORMAT f) -> DXGI_FORMAT
 {
     switch (f)
@@ -174,7 +160,6 @@ auto DlssNr_Dx12::State::ReleaseResources() -> void
     ParkNrResource(nr.outputNative);
 
     ParkNrResource(nr.heldColor);
-    nr.heldActive = false;
 
     ParkNrResource(nr.depthClone);
 

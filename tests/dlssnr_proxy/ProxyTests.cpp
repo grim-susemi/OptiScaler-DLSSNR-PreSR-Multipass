@@ -8,7 +8,6 @@ namespace DlssNr::NgxDiagnostics
 {
 Scope::Scope() {}
 Scope::~Scope() {}
-void RuntimeReport(ID3D12GraphicsCommandList*, ID3D12Device*, const char*) {}
 }
 
 // Routing seam: hardware tests separately exercise the real compatibility loader.

@@ -273,11 +273,6 @@ class Config
     CustomOptional<float> DlssNrIntensity { 1.0f };
     // 0 Standard, 1 Natural, 2 Cinematic.
     CustomOptional<uint32_t> DlssNrStyle { 0 };
-    // Absent overrides inherit pass 1; later-pass LocalTone defaults to zero.
-    CustomOptional<uint32_t, NoDefault> DlssNrPass2Preset;
-    CustomOptional<uint32_t, NoDefault> DlssNrPass2Style;
-    CustomOptional<uint32_t, NoDefault> DlssNrPass3Preset;
-    CustomOptional<uint32_t, NoDefault> DlssNrPass3Style;
     CustomOptional<float> DlssNrLocalStructure { 1.0f };
     CustomOptional<float> DlssNrLocalTone { 1.0f };
     // -1 follows the model's LocalStructure setting.
@@ -290,24 +285,15 @@ class Config
     CustomOptional<float> DlssNrEnvironmentDetail { 1.0f };
     CustomOptional<float> DlssNrEnvironmentColour { 1.0f };
     CustomOptional<bool> DlssNrShowSkinMask { false };
-    CustomOptional<float, NoDefault> DlssNrPass2Intensity;
-    CustomOptional<float, NoDefault> DlssNrPass2LocalStructure;
-    CustomOptional<float, NoDefault> DlssNrPass2LocalTone;
-    CustomOptional<float, NoDefault> DlssNrPass2SkinStructure;
-    CustomOptional<bool, NoDefault> DlssNrPass2AutoMask;
-    CustomOptional<float, NoDefault> DlssNrPass3Intensity;
-    CustomOptional<float, NoDefault> DlssNrPass3LocalStructure;
-    CustomOptional<float, NoDefault> DlssNrPass3LocalTone;
-    CustomOptional<float, NoDefault> DlssNrPass3SkinStructure;
-    CustomOptional<bool, NoDefault> DlssNrPass3AutoMask;
     CustomOptional<bool> DlssNrUnlockPasses { false };
-    struct NrExtraPass
+    // Passes 2..30 inherit pass 1, except LocalTone defaults to zero.
+    struct NrPassOverrides
     {
-        CustomOptional<uint32_t, NoDefault> style;
+        CustomOptional<uint32_t, NoDefault> preset, style;
         CustomOptional<float, NoDefault> intensity, structure, tone, skin;
         CustomOptional<bool, NoDefault> autoMask;
     };
-    NrExtraPass DlssNrExtraPasses[27]; // pass 4..30; legacy pass 2/3 keys stay compatible
+    NrPassOverrides DlssNrPassOverrides[29]; // Existing Pass2..Pass30 INI keys remain unchanged.
 
     // Composition strengths are separate from model creation settings.
     CustomOptional<float> DlssNrTransferStrength { 1.0f };

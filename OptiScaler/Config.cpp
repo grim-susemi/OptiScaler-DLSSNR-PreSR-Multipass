@@ -354,10 +354,6 @@ bool Config::Reload(std::filesystem::path iniPath)
             DlssNrPreset.set_from_config(readUInt("DlssNr", "Preset"));
             DlssNrIntensity.set_from_config(readFloat("DlssNr", "Intensity"));
             DlssNrStyle.set_from_config(readUInt("DlssNr", "Style"));
-            DlssNrPass2Preset.set_from_config(readUInt("DlssNr", "Pass2Preset"));
-            DlssNrPass2Style.set_from_config(readUInt("DlssNr", "Pass2Style"));
-            DlssNrPass3Preset.set_from_config(readUInt("DlssNr", "Pass3Preset"));
-            DlssNrPass3Style.set_from_config(readUInt("DlssNr", "Pass3Style"));
             DlssNrLocalStructure.set_from_config(readFloat("DlssNr", "LocalStructure"));
             DlssNrLocalTone.set_from_config(readFloat("DlssNr", "LocalTone"));
             DlssNrSkinStructure.set_from_config(readFloat("DlssNr", "SkinStructure"));
@@ -368,26 +364,18 @@ bool Config::Reload(std::filesystem::path iniPath)
             DlssNrEnvironmentDetail.set_from_config(readFloat("DlssNr", "EnvironmentDetail"));
             DlssNrEnvironmentColour.set_from_config(readFloat("DlssNr", "EnvironmentColour"));
             DlssNrShowSkinMask.set_from_config(readBool("DlssNr", "ShowSkinMask"));
-            DlssNrPass2Intensity.set_from_config(readFloat("DlssNr", "Pass2Intensity"));
-            DlssNrPass2LocalStructure.set_from_config(readFloat("DlssNr", "Pass2LocalStructure"));
-            DlssNrPass2LocalTone.set_from_config(readFloat("DlssNr", "Pass2LocalTone"));
-            DlssNrPass2SkinStructure.set_from_config(readFloat("DlssNr", "Pass2SkinStructure"));
-            DlssNrPass2AutoMask.set_from_config(readBool("DlssNr", "Pass2AutoMask"));
-            DlssNrPass3Intensity.set_from_config(readFloat("DlssNr", "Pass3Intensity"));
-            DlssNrPass3LocalStructure.set_from_config(readFloat("DlssNr", "Pass3LocalStructure"));
-            DlssNrPass3LocalTone.set_from_config(readFloat("DlssNr", "Pass3LocalTone"));
-            DlssNrPass3SkinStructure.set_from_config(readFloat("DlssNr", "Pass3SkinStructure"));
-            DlssNrPass3AutoMask.set_from_config(readBool("DlssNr", "Pass3AutoMask"));
             DlssNrUnlockPasses.set_from_config(readBool("DlssNr", "UnlockPasses"));
-            for (unsigned int i = 0; i < 27; ++i)
+            for (unsigned int i = 0; i < std::size(DlssNrPassOverrides); ++i)
             {
-                auto& pass = DlssNrExtraPasses[i];
-                pass.style.set_from_config(readUInt("DlssNr", std::format("Pass{}Style", i + 4).c_str()));
-                pass.intensity.set_from_config(readFloat("DlssNr", std::format("Pass{}Intensity", i + 4).c_str()));
-                pass.structure.set_from_config(readFloat("DlssNr", std::format("Pass{}LocalStructure", i + 4).c_str()));
-                pass.tone.set_from_config(readFloat("DlssNr", std::format("Pass{}LocalTone", i + 4).c_str()));
-                pass.skin.set_from_config(readFloat("DlssNr", std::format("Pass{}SkinStructure", i + 4).c_str()));
-                pass.autoMask.set_from_config(readBool("DlssNr", std::format("Pass{}AutoMask", i + 4).c_str()));
+                auto& pass = DlssNrPassOverrides[i];
+                if (i < 2)
+                    pass.preset.set_from_config(readUInt("DlssNr", std::format("Pass{}Preset", i + 2).c_str()));
+                pass.style.set_from_config(readUInt("DlssNr", std::format("Pass{}Style", i + 2).c_str()));
+                pass.intensity.set_from_config(readFloat("DlssNr", std::format("Pass{}Intensity", i + 2).c_str()));
+                pass.structure.set_from_config(readFloat("DlssNr", std::format("Pass{}LocalStructure", i + 2).c_str()));
+                pass.tone.set_from_config(readFloat("DlssNr", std::format("Pass{}LocalTone", i + 2).c_str()));
+                pass.skin.set_from_config(readFloat("DlssNr", std::format("Pass{}SkinStructure", i + 2).c_str()));
+                pass.autoMask.set_from_config(readBool("DlssNr", std::format("Pass{}AutoMask", i + 2).c_str()));
             }
             DlssNrReversibleMode.set_from_config(readUInt("DlssNr", "ReversibleMode"));
             DlssNrApplyModel.set_from_config(readBool("DlssNr", "ApplyModel"));
@@ -1288,14 +1276,6 @@ bool Config::SaveIni()
     ini.SetValue("DlssNr", "Preset", GetIntValue(Instance()->DlssNrPreset.value_for_config()).c_str());
     ini.SetValue("DlssNr", "Intensity", GetFloatValue(Instance()->DlssNrIntensity.value_for_config()).c_str());
     ini.SetValue("DlssNr", "Style", GetIntValue(Instance()->DlssNrStyle.value_for_config()).c_str());
-    ini.SetValue("DlssNr", "Pass2Preset",
-                 GetIntValue(Instance()->DlssNrPass2Preset.value_for_config()).c_str());
-    ini.SetValue("DlssNr", "Pass2Style",
-                 GetIntValue(Instance()->DlssNrPass2Style.value_for_config()).c_str());
-    ini.SetValue("DlssNr", "Pass3Preset",
-                 GetIntValue(Instance()->DlssNrPass3Preset.value_for_config()).c_str());
-    ini.SetValue("DlssNr", "Pass3Style",
-                 GetIntValue(Instance()->DlssNrPass3Style.value_for_config()).c_str());
     ini.SetValue("DlssNr", "LocalStructure",
                  GetFloatValue(Instance()->DlssNrLocalStructure.value_for_config()).c_str());
     ini.SetValue("DlssNr", "LocalTone", GetFloatValue(Instance()->DlssNrLocalTone.value_for_config()).c_str());
@@ -1308,26 +1288,18 @@ bool Config::SaveIni()
     ini.SetValue("DlssNr", "EnvironmentDetail", GetFloatValue(Instance()->DlssNrEnvironmentDetail.value_for_config()).c_str());
     ini.SetValue("DlssNr", "EnvironmentColour", GetFloatValue(Instance()->DlssNrEnvironmentColour.value_for_config()).c_str());
     ini.SetValue("DlssNr", "ShowSkinMask", GetBoolValue(Instance()->DlssNrShowSkinMask.value_for_config()).c_str());
-    ini.SetValue("DlssNr", "Pass2Intensity", GetFloatValue(Instance()->DlssNrPass2Intensity.value_for_config()).c_str());
-    ini.SetValue("DlssNr", "Pass2LocalStructure", GetFloatValue(Instance()->DlssNrPass2LocalStructure.value_for_config()).c_str());
-    ini.SetValue("DlssNr", "Pass2LocalTone", GetFloatValue(Instance()->DlssNrPass2LocalTone.value_for_config()).c_str());
-    ini.SetValue("DlssNr", "Pass2SkinStructure", GetFloatValue(Instance()->DlssNrPass2SkinStructure.value_for_config()).c_str());
-    ini.SetValue("DlssNr", "Pass2AutoMask", GetBoolValue(Instance()->DlssNrPass2AutoMask.value_for_config()).c_str());
-    ini.SetValue("DlssNr", "Pass3Intensity", GetFloatValue(Instance()->DlssNrPass3Intensity.value_for_config()).c_str());
-    ini.SetValue("DlssNr", "Pass3LocalStructure", GetFloatValue(Instance()->DlssNrPass3LocalStructure.value_for_config()).c_str());
-    ini.SetValue("DlssNr", "Pass3LocalTone", GetFloatValue(Instance()->DlssNrPass3LocalTone.value_for_config()).c_str());
-    ini.SetValue("DlssNr", "Pass3SkinStructure", GetFloatValue(Instance()->DlssNrPass3SkinStructure.value_for_config()).c_str());
-    ini.SetValue("DlssNr", "Pass3AutoMask", GetBoolValue(Instance()->DlssNrPass3AutoMask.value_for_config()).c_str());
     ini.SetValue("DlssNr", "UnlockPasses", GetBoolValue(Instance()->DlssNrUnlockPasses.value_for_config()).c_str());
-    for (unsigned int i = 0; i < 27; ++i)
+    for (unsigned int i = 0; i < std::size(Instance()->DlssNrPassOverrides); ++i)
     {
-        auto& pass = Instance()->DlssNrExtraPasses[i];
-        ini.SetValue("DlssNr", std::format("Pass{}Style", i + 4).c_str(), GetIntValue(pass.style.value_for_config()).c_str());
-        ini.SetValue("DlssNr", std::format("Pass{}Intensity", i + 4).c_str(), GetFloatValue(pass.intensity.value_for_config()).c_str());
-        ini.SetValue("DlssNr", std::format("Pass{}LocalStructure", i + 4).c_str(), GetFloatValue(pass.structure.value_for_config()).c_str());
-        ini.SetValue("DlssNr", std::format("Pass{}LocalTone", i + 4).c_str(), GetFloatValue(pass.tone.value_for_config()).c_str());
-        ini.SetValue("DlssNr", std::format("Pass{}SkinStructure", i + 4).c_str(), GetFloatValue(pass.skin.value_for_config()).c_str());
-        ini.SetValue("DlssNr", std::format("Pass{}AutoMask", i + 4).c_str(), GetBoolValue(pass.autoMask.value_for_config()).c_str());
+        auto& pass = Instance()->DlssNrPassOverrides[i];
+        if (i < 2)
+            ini.SetValue("DlssNr", std::format("Pass{}Preset", i + 2).c_str(), GetIntValue(pass.preset.value_for_config()).c_str());
+        ini.SetValue("DlssNr", std::format("Pass{}Style", i + 2).c_str(), GetIntValue(pass.style.value_for_config()).c_str());
+        ini.SetValue("DlssNr", std::format("Pass{}Intensity", i + 2).c_str(), GetFloatValue(pass.intensity.value_for_config()).c_str());
+        ini.SetValue("DlssNr", std::format("Pass{}LocalStructure", i + 2).c_str(), GetFloatValue(pass.structure.value_for_config()).c_str());
+        ini.SetValue("DlssNr", std::format("Pass{}LocalTone", i + 2).c_str(), GetFloatValue(pass.tone.value_for_config()).c_str());
+        ini.SetValue("DlssNr", std::format("Pass{}SkinStructure", i + 2).c_str(), GetFloatValue(pass.skin.value_for_config()).c_str());
+        ini.SetValue("DlssNr", std::format("Pass{}AutoMask", i + 2).c_str(), GetBoolValue(pass.autoMask.value_for_config()).c_str());
     }
     ini.SetValue("DlssNr", "ReversibleMode", GetIntValue(Instance()->DlssNrReversibleMode.value_for_config()).c_str());
     ini.SetValue("DlssNr", "ApplyModel", GetBoolValue(Instance()->DlssNrApplyModel.value_for_config()).c_str());

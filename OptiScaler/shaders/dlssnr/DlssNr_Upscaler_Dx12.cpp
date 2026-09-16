@@ -1,9 +1,9 @@
 #include "pch.h"
 #include "DlssNr_Upscaler_Dx12.h"
+#include <dlssnr/DlssNr_Pipeline_Dx12.h>
 #include <proxies/NVNGX_Proxy.h>
 #include <cstring>
 #include <cmath>
-#include <vector>
 #include <cstdio>
 
 #include <dlssnr/DlssNr_Upscaler.h>
@@ -94,17 +94,6 @@ struct PrivateUpscalerDx12::Impl
         std::snprintf(message, sizeof(message), "%s returned 0x%08X", operation, (unsigned)result);
         error = message;
         return false;
-    }
-
-    static void Barrier(ID3D12GraphicsCommandList* cmd, ID3D12Resource* resource, D3D12_RESOURCE_STATES before,
-                        D3D12_RESOURCE_STATES after)
-    {
-        if (before == after)
-            return;
-        D3D12_RESOURCE_BARRIER b {};
-        b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        b.Transition = { resource, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, before, after };
-        cmd->ResourceBarrier(1, &b);
     }
 
     // Camera values have already been resolved and snapshotted by the NR seam.
@@ -306,17 +295,12 @@ struct PrivateUpscalerDx12::Impl
             return false;
         if (rayReconstruction && (!f.rr.valid || f.rr.roughnessMode != roughnessMode ||
                                    f.rr.hardwareDepth != hardwareDepth)) return false;
-        std::vector<PrivateUpscalerResourceDx12> inputs;
-        auto addInput = [&](PrivateUpscalerResourceDx12 input)
-        {
-            if (input.resource && std::none_of(inputs.begin(), inputs.end(),
-                    [&](auto existing) { return existing.resource == input.resource; })) inputs.push_back(input);
-        };
-        for (auto input : { f.color, f.depth, f.motion, f.exposure }) addInput(input);
+        ReadableInputs_Dx12 inputs { cmd };
+        for (auto input : { f.color, f.depth, f.motion, f.exposure })
+            inputs.Read(input.resource, input.state);
         if (rayReconstruction)
-            for (auto input : f.rr.guides) addInput(input);
-        for (auto input : inputs)
-            Barrier(cmd, input.resource, input.state, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            for (auto input : f.rr.guides)
+                inputs.Read(input.resource, input.state);
         Barrier(cmd, output, f.output.state, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         bool result = false;
         if (backend == PrivateUpscaler::DLSS && feature)
@@ -402,8 +386,6 @@ struct PrivateUpscalerDx12::Impl
                 XeSSProxy::D3D12Execute()(xess, cmd, &d) == XESS_RESULT_SUCCESS;
         }
         Barrier(cmd, output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, f.output.state);
-        for (auto input : inputs)
-            Barrier(cmd, input.resource, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, input.state);
         return result;
     }
 };

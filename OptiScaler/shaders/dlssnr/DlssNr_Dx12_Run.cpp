@@ -72,32 +72,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         ReportSkipOnce("depth or motion-vector subrect is empty");
         return false;
     }
-    const auto guideWidth = guides.depth.width, guideHeight = guides.depth.height;
-
-    if (frame.Reset)
-    {
-        nr.reset = true;
-
-        ++resets;
-
-        if (resets <= 3 || resets % 100 == 0)
-            LOG_INFO("DLSS-NR: the game asked for a history reset ({} so far)", resets);
-    }
-
-    // Guide dimensions can change without rebuilding the model; report changes as they occur.
-
-    const GuideReport guidesNow {
-        true,  frame.DepthInverted, frame.MvScaleX, frame.MvScaleY, guideWidth, guideHeight,
-        width, (unsigned int) height
-    };
-
-    if (loggedGuides != guidesNow)
-    {
-        loggedGuides = guidesNow;
-        LOG_INFO("DLSS-NR guides: depth {}, motion vector scale {} x {}, guides {}x{} for a {}x{} frame",
-                 frame.DepthInverted ? "inverted" : "not inverted", frame.MvScaleX, frame.MvScaleY,
-                 guideWidth, guideHeight, width, height);
-    }
+    nr.reset |= frame.Reset;
 
     const unsigned int requestedPasses =
         std::clamp(cfg.DlssNrPasses.value_or_default(), 1u,
@@ -125,16 +100,6 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         return false;
     // The parameter adapter already combined the HDR flag with the active color format.
     const bool isHdrBuffer = frame.ColourIsLinearHdr;
-
-    if (!reportedHdr || reportedHdrValue != isHdrBuffer || reportedBefore != frame.BeforeUpscale)
-    {
-        reportedHdr = true;
-        reportedHdrValue = isHdrBuffer;
-        reportedBefore = frame.BeforeUpscale;
-        LOG_INFO("DLSS-NR {} SR: the game's DLSS colour space is {} so the colour transform is {}",
-                 frame.BeforeUpscale ? "before" : "after", isHdrBuffer ? "linear HDR" : "already tone-mapped",
-                 isHdrBuffer ? "on" : "off");
-    }
 
     if (!shader.IsInit())
     {
@@ -202,10 +167,81 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         }
     };
 
-    EncodeContext encoded { cmdList, device, target, targetState, frame, workScale, targetSupportsUav };
-    EncodeInput(encoded);
-    targetState = encoded.targetState;
-    auto* modelInput = encoded.modelInput;
+    const float whitePoint = HoldColor(cmdList, device, target, targetState,
+        frame.WhitePointOverride > 0.0f ? frame.WhitePointOverride : cfg.DlssNrWhitePointScale.value_or_default());
+    DlssNrConstants encodeParams {};
+    encodeParams.Mode = DlssNrMode_Encode;
+    // A frame that is already display-referred is handed over untouched: the encode becomes a copy and
+    // the resolve adds the model's edit back at full scale.
+    encodeParams.Passthrough = isHdrBuffer ? 0u : 1u;
+    encodeParams.WhitePoint = whitePoint;
+    encodeParams.ReversibleMode = cfg.DlssNrReversibleMode.value_or_default();
+    encodeParams.Width = width;
+    encodeParams.Height = height;
+
+    TransitionTarget(D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    shader.DispatchPass(cmdList, encodeParams, target, nullptr, nullptr, nullptr, nr.colorCopy,
+                        nr.hdrCopy);
+
+    if (targetSupportsUav)
+        TransitionTarget(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    // The transitions double as the wait for the encode's writes.
+    Barrier(cmdList, nr.colorCopy, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    Barrier(cmdList, nr.hdrCopy, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+
+    // Below full resolution the model is shown a filtered shrink of the proxy; the edit it returns is
+    // enlarged during the resolve while the frame underneath stays full size and untouched.
+    auto* modelInput = nr.colorCopy;
+
+    if (reduced && nr.colorSmall != nullptr)
+    {
+        bool built = false;
+
+        if (workScale > 1.0f)
+        {
+            // Both filters bake the NR downscaler selection. Retire them together when it changes.
+            const Scaler nrScaler = cfg.DlssNrScalingDownscaler.value_or_default();
+            if (nr.nrScaler != nrScaler)
+            {
+                ReleaseSupersamplers();
+                nr.nrScaler = nrScaler;
+            }
+            if (nr.superUp == nullptr)
+                nr.superUp = new OS_Dx12("DLSS-NR supersample up", device, true, nrScaler);
+            if (nr.superDown == nullptr)
+                nr.superDown = new OS_Dx12("DLSS-NR supersample down", device, false, nrScaler);
+
+            if (nr.superUp != nullptr && nr.superUp->DispatchResources(cmdList, nr.colorCopy, nr.colorSmall))
+            {
+                Barrier(cmdList, nr.colorSmall, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                built = true;
+            }
+        }
+
+        if (!built)
+        {
+            if (workScale > 1.0f && !warnedSuper)
+            {
+                warnedSuper = true;
+                LOG_WARN("DLSS-NR supersample: upscaler unavailable, falling back to a blocky enlarge.");
+            }
+
+            // Sub-native (or the upsampler could not be built): box-resample the proxy to the work size.
+            DlssNrConstants down {};
+            down.Mode = DlssNrMode_Downsample;
+            down.Width = workWidth;
+            down.Height = workHeight;
+            shader.DispatchPass(cmdList, down, modelInput, nullptr, nullptr, nullptr, nr.colorSmall,
+                                nullptr);
+            Barrier(cmdList, nr.colorSmall, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        }
+
+        modelInput = nr.colorSmall;
+    }
 
     ID3D12Resource* depthIn = ReadableGuide(device, cmdList, depth, &nr.depthClone);
     ID3D12Resource* motionIn = ReadableGuide(device, cmdList, motion, &nr.motionClone);
@@ -322,26 +358,18 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
 
     nr.reset = clampFailed || finalAnswer == nullptr;
 
-    // Supersampling probe: report the model working ABOVE native so a test log tells us whether NGX even
-    // accepts a super-native evaluate and what it returns. Once per working-size change, or on any error.
-    if (workWidth > width || workHeight > height)
-    {
-
-        if (lastSuper != workWidth || result != 1)
-        {
-            lastSuper = workWidth;
-            LOG_INFO("DLSS-NR SUPERSAMPLE: model at {}x{} = {:.2f}x native {}x{}, evaluate result {} ({})",
-                     workWidth, workHeight, (float) workWidth / (float) width, width, height, result,
-                     NgxResultName((unsigned int) result));
-        }
-    }
-
     if (result == NVSDK_NGX_Result_Success && finalAnswer != nullptr)
     {
         // Resolve takes the difference between what the model returned and what it was shown, and adds
         // that back to the frame. At strength zero the result is what the upscaler produced, exactly, and
         // anything the model left alone is untouched rather than round-tripped through the curve.
-        auto resolveParams = MakeResolveConstants(encoded, effectivePasses);
+        auto resolveParams = DlssNr_Common::MakeConstants(DlssNrMode_Resolve, width, height, whitePoint, isHdrBuffer, cfg);
+        const auto strength = [](float v) { return std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 1.0f; };
+        resolveParams.SkinDetail = strength(resolveParams.SkinDetail);
+        resolveParams.SkinColour = strength(resolveParams.SkinColour);
+        resolveParams.EnvironmentDetail = strength(resolveParams.EnvironmentDetail);
+        resolveParams.EnvironmentColour = strength(resolveParams.EnvironmentColour);
+
 
         // Downsample the model answer to native for composition; fall back to the working-size pair.
         // The final answer is NPSR and the native output rests in UAV.

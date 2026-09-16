@@ -959,7 +959,6 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
     <ClCompile Include="shaders\dlssnr\DlssNr_Dx12_Status.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="shaders\dlssnr\DlssNr_Dx12_Encode.cpp" />
     <ClCompile Include="shaders\dlssnr\DlssNr_Dx12_Models.cpp" />
   </ItemGroup>
   <ItemGroup>

@@ -23,6 +23,35 @@ inline void SetModelTuning(NVSDK_NGX_Parameter* params, const ModelSettings& set
     params->Set("DLSSNR.UseAutoMask", settings.autoMask ? 1u : 0u);
 }
 
+inline void SetModelCreation(NVSDK_NGX_Parameter* params, const ModelSettings& settings, unsigned width,
+                             unsigned height)
+{
+    params->Set("DLSSNR.Enabled", 1u);
+    params->Set("DLSSNR.Width", width);
+    params->Set("DLSSNR.Height", height);
+    params->Set("CreationNodeMask", 1u);
+    params->Set("VisibilityNodeMask", 1u);
+    params->Set("DLSSNR.Hint.Render.Preset", settings.preset);
+    params->Set("DLSSNR.UICorrection", 1u);
+    SetModelTuning(params, settings);
+}
+
+// The game supplies the same guide metadata on both APIs; resource wrappers and reset types differ.
+template <typename Frame>
+void ReadModelGuides(NVSDK_NGX_Parameter* params, unsigned flags, Frame& frame)
+{
+    frame.DepthInverted = (flags & NVSDK_NGX_DLSS_Feature_Flags_DepthInverted) != 0;
+    frame.MotionVectorsLowResolution = (flags & NVSDK_NGX_DLSS_Feature_Flags_MVLowRes) != 0;
+    params->Get(NVSDK_NGX_Parameter_MV_Scale_X, &frame.MvScaleX);
+    params->Get(NVSDK_NGX_Parameter_MV_Scale_Y, &frame.MvScaleY);
+    params->Get(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Width, &frame.RenderSubrectWidth);
+    params->Get(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Height, &frame.RenderSubrectHeight);
+    params->Get(NVSDK_NGX_Parameter_DLSS_Input_Depth_Subrect_Base_X, &frame.DepthSubrectBaseX);
+    params->Get(NVSDK_NGX_Parameter_DLSS_Input_Depth_Subrect_Base_Y, &frame.DepthSubrectBaseY);
+    params->Get(NVSDK_NGX_Parameter_DLSS_Input_MV_SubrectBase_X, &frame.MotionSubrectBaseX);
+    params->Get(NVSDK_NGX_Parameter_DLSS_Input_MV_SubrectBase_Y, &frame.MotionSubrectBaseY);
+}
+
 inline void SetModelRegions(NVSDK_NGX_Parameter* params, GuideExtent size, const GuideRegions& guides)
 {
     params->Set("DLSSNR.ColorSubrectBaseX", 0u);

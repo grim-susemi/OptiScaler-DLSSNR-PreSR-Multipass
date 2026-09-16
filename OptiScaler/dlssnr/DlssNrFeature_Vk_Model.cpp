@@ -131,14 +131,7 @@ bool ModelVk::Impl::CreateModel(VkCommandBuffer commandBuffer, unsigned int pass
         }
     }
     auto* parameters = model.parameters;
-    parameters->Set("DLSSNR.Enabled", 1u);
-    parameters->Set("DLSSNR.Width", width);
-    parameters->Set("DLSSNR.Height", height);
-    parameters->Set("CreationNodeMask", 1u);
-    parameters->Set("VisibilityNodeMask", 1u);
-    parameters->Set("DLSSNR.Hint.Render.Preset", Profiles::PassPreset(config, passIndex));
-    parameters->Set("DLSSNR.UICorrection", 1u);
-    SetModelTuning(parameters, Profiles::PassSettings(config, passIndex));
+    SetModelCreation(parameters, Profiles::PassSettings(config, passIndex), width, height);
     parameters->Set("DLSSNR.ControlMask", static_cast<void*>(nullptr));
     const auto result = NVNGXProxy::VULKAN_CreateFeature1()(
         state.device, commandBuffer, static_cast<NVSDK_NGX_Feature>(18), parameters, &model.feature);

@@ -24,7 +24,6 @@ constexpr uint32_t kDlssNrHdrCurveBins = 48;
 // Caller-supplied buffer conventions. User controls remain in Config; allocation sizes come from resources.
 struct DlssNrFrameInfo
 {
-    uint32_t Width = 0, Height = 0, GuideWidth = 0, GuideHeight = 0;
     bool DepthInverted = false;
 
     // Game-reported motion scale; guides retain independent active regions.

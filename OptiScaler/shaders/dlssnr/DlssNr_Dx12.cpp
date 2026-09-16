@@ -344,20 +344,16 @@ bool DlssNr_Dx12::Dispatch(ID3D12GraphicsCommandList* cmd, ID3D12Resource* colou
         return false;
     auto info = frame;
     info.OutputArrivalState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-    if (!info.RenderSubrectWidth)
-        info.RenderSubrectWidth = info.Width;
-    if (!info.RenderSubrectHeight)
-        info.RenderSubrectHeight = info.Height;
     if (colour != output)
     {
         const auto source = colour->GetDesc(), target = output->GetDesc();
         if (source.Width != target.Width || source.Height != target.Height || source.Format != target.Format)
             return false;
-        _state->Barrier(cmd, colour, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
-        _state->Barrier(cmd, output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
+        Barrier(cmd, colour, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        Barrier(cmd, output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
         cmd->CopyResource(output, colour);
-        _state->Barrier(cmd, colour, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-        _state->Barrier(cmd, output, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        Barrier(cmd, colour, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        Barrier(cmd, output, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
     return _state->Run(cmd, output, depth, motion, info, queue);
 }

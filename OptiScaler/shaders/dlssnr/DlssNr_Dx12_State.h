@@ -40,6 +40,7 @@
 #include "../output_scaling/OS_Dx12.h"
 
 using DlssNr::Profiles::PassSettings;
+using DlssNr::Barrier;
 
 struct DlssNr_Dx12::State
 {
@@ -131,9 +132,6 @@ struct DlssNr_Dx12::State
     void ReleaseSupersamplers();
 
     ID3D12Resource* CreateScratch(ID3D12Device* device, DXGI_FORMAT format, unsigned int width, unsigned int height);
-
-    void Barrier(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* res, D3D12_RESOURCE_STATES from,
-                 D3D12_RESOURCE_STATES to);
 
     // A typeless resource cannot be viewed, and NGX builds its own views with nothing to tell it which
     // format to use. Depth is very often declared typeless, so the typed member of the same family is
@@ -332,20 +330,8 @@ struct DlssNr_Dx12::State
                           const DlssNrFrameInfo& frame, const D3D12_RESOURCE_DESC& desc,
                           DlssNr::ColorExtent native, DlssNr::ColorExtent work,
                           float workScale, unsigned int requestedPasses);
-    struct EncodeContext
-    {
-        ID3D12GraphicsCommandList* cmdList;
-        ID3D12Device* device;
-        ID3D12Resource* target;
-        D3D12_RESOURCE_STATES targetState;
-        const DlssNrFrameInfo& frame;
-        float workScale;
-        bool targetSupportsUav;
-        float whitePoint = 1.0f;
-        ID3D12Resource* modelInput = nullptr;
-    };
-    void EncodeInput(EncodeContext& context);
-    DlssNrConstants MakeResolveConstants(const EncodeContext& context, unsigned int effectivePasses);
+    float HoldColor(ID3D12GraphicsCommandList* cmd, ID3D12Device* device, ID3D12Resource* target,
+                    D3D12_RESOURCE_STATES state, float whitePoint);
     void EndGpuTiming(ID3D12GraphicsCommandList* cmdList);
 
     bool Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* target, ID3D12Resource* depth, ID3D12Resource* motion,
@@ -353,46 +339,10 @@ struct DlssNr_Dx12::State
 
     void ReleaseResources();
 
-    struct GuideReport
-    {
-        bool valid;
-        bool depthInverted;
-        float mvScaleX;
-        float mvScaleY;
-        unsigned int guideW;
-        unsigned int guideH;
-        unsigned int frameW;
-        unsigned int frameH;
-        bool operator==(const GuideReport&) const = default;
-    };
-    GuideReport loggedGuides {};
-    struct ComposeReport
-    {
-        bool valid;
-        float whitePoint;
-        float transfer;
-        float colour;
-        float maxRatio;
-        unsigned int passthrough;
-        unsigned int debugView;
-        unsigned int compareMode;
-        unsigned int residual;
-        unsigned int workW;
-        unsigned int workH;
-        unsigned int passes;
-        bool operator==(const ComposeReport&) const = default;
-    };
-    ComposeReport loggedCompose {};
-
     std::set<std::string> seen;
-    unsigned long long resets = 0;
-    bool reportedHdr = false;
-    bool reportedHdrValue = false;
-    bool reportedBefore = false;
     bool warnedSuper = false;
     unsigned int loggedConfigured = 0;
     unsigned int loggedEffective = 0;
-    unsigned int lastSuper = 0;
     unsigned long long lastSplitLog = 0;
     unsigned lastFinishedMode = 0;
 

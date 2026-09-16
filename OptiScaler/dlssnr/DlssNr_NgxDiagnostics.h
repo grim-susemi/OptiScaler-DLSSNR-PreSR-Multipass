@@ -1,6 +1,5 @@
 #pragma once
 #include <nvsdk_ngx_defs.h>
-#include <d3d12.h>
 
 namespace DlssNr::NgxDiagnostics
 {
@@ -14,5 +13,4 @@ class Scope
     Scope(const Scope&) = delete;
     Scope& operator=(const Scope&) = delete;
 };
-void RuntimeReport(ID3D12GraphicsCommandList* commands, ID3D12Device* device, const char* phase);
 }

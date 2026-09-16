@@ -46,10 +46,6 @@ struct ModelStateDx12
     // over the live output before the encode reads it while held, so a setting change re-renders the
     // same frame. heldWhitePoint preserves the encode scale for the comparison.
     ID3D12Resource* heldColor = nullptr;
-    bool heldActive = false;
-    unsigned int heldWidth = 0;
-    unsigned int heldHeight = 0;
-    DXGI_FORMAT heldFormat = DXGI_FORMAT_UNKNOWN;
     float heldWhitePoint = 1.0f;
 
     unsigned int workWidth = 0;

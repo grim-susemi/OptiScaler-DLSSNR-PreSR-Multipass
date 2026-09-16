@@ -1,47 +1,8 @@
-
-#ifdef VK_MODE
-[[vk::binding(0, 0)]]
-cbuffer Params : register(b0, space0)
-#else
-cbuffer Params : register(b0)
-#endif
-{
-    uint  gMode;
-    float gWhitePoint;
-    uint  gWidth;
-    uint  gHeight;
-    float gTransferStrength;
-    float gColourStrength;
-    uint  gDebugView;
-    float gMaxRatio;
-    uint  gPassthrough;
-    float gMvScaleX;     // motion vector units -> pixels of this dispatch
-    float gMvScaleY;
-    uint  gGuideWidth;   // the motion texture's valid region
-    uint  gGuideHeight;
-    uint  gCompareMode;  // 0 off, 1 side by side, 2 wipe
-    float gCompareSplit; // where the wipe cuts, 0..1
-    float gCompareZoom;  // side by side: 1 fits the frame, 2 fills the half
-    uint  gCompareSwap;  // put the edited frame on the other side
-    uint  gTransfer;     // 0 classic, 1 matched residual -- how a below-size model comes back
-    float gDebugScale;   // debug view scale in the frame's units
-    uint  gReversibleMode; // 0 knee, 1 Neutwo+composed, 2 Neutwo+replace, 3 hybrid+composed, 4 hybrid+replace
-    uint  gApplyModel;     // 0 output the clean frame (pass still runs), 1 apply the model's edit
-    uint  gReserved;
-    float gResidualScale;
-    uint  gSkinProtection;
-    uint  gShowSkinMask;
-    float gSkinDetail;
-    float gSkinColour;
-    float gEnvironmentDetail;
-    float gEnvironmentColour;
-};
+#include "dlssnr_common.hlsli"
 
 // Hue-preserving gamut compression toward the D65 neutral axis.
 // Adapted from clshortfuse/RenoDX (https://github.com/clshortfuse/renodx).
 // See Licenses/RenoDX_ATTRIBUTION.txt.
-
-float SanitizeFinite(float v, float fallback) { return isfinite(v) ? v : fallback; }
 
 // Approximate skin-colour selection, not a face/skin segmentation network. Warm
 // materials may be selected and coloured lighting can hide skin. The preview is
@@ -55,12 +16,6 @@ float SkinColourWeight(float3 rgb)
     float2 distance = (float2(cb, cr) - float2(0.405, 0.600)) / float2(0.090, 0.110);
     float chroma = max(rgb.r, max(rgb.g, rgb.b)) - min(rgb.r, min(rgb.g, rgb.b));
     return (1.0 - smoothstep(0.55, 1.35, length(distance))) * smoothstep(0.02, 0.10, chroma);
-}
-
-float3 SanitizeFinite3(float3 v, float3 fallback)
-{
-    return float3(SanitizeFinite(v.x, fallback.x), SanitizeFinite(v.y, fallback.y),
-                  SanitizeFinite(v.z, fallback.z));
 }
 
 float SafeDivide(float numerator, float denominator, float fallback)
@@ -185,40 +140,6 @@ float3 HueOkLab(float3 incorrect, float3 correct)
 
     return ClampAp1(FromOkLab(incorrectLab));
 }
-
-// Bindings are stated for SPIR-V rather than inferred. D3D keeps b, t, u and s in separate register
-// files, so b0 and t0 do not collide; Vulkan has one number line per descriptor set, and dxc's default
-// mapping would put both at binding 0. The numbers below are the order the pass binds them in, and
-// DlssNr_Vk's descriptor set layout has to agree with them entry for entry.
-#ifdef VK_MODE
-[[vk::binding(1, 0)]]
-#endif
-Texture2D<float4>   gSource   : register(t0);  // encode: the frame. resolve: the proxy.
-#ifdef VK_MODE
-[[vk::binding(2, 0)]]
-#endif
-Texture2D<float4>   gModel    : register(t1);  // resolve: what the model returned.
-#ifdef VK_MODE
-[[vk::binding(3, 0)]]
-#endif
-Texture2D<float4>   gOriginal : register(t2);  // resolve: the untouched frame.
-#ifdef VK_MODE
-[[vk::binding(4, 0)]]
-#endif
-Texture2D<float4>   gMotion   : register(t3);  // resolve, accumulating: the game's motion vectors.
-
-#ifdef VK_MODE
-[[vk::binding(5, 0)]]
-#endif
-RWTexture2D<float4> gTarget   : register(u0);  // encode: the proxy. resolve: the frame.
-#ifdef VK_MODE
-[[vk::binding(6, 0)]]
-#endif
-RWTexture2D<float4> gKeep     : register(u1);  // encode: the untouched copy. unused by the resolve.
-#ifdef VK_MODE
-[[vk::binding(7, 0)]]
-#endif
-SamplerState        gLinear   : register(s0);  // so the edit can be read at a different size
 
 float WhitePoint()
 {
@@ -521,21 +442,8 @@ void CSMain(uint3 id : SV_DispatchThreadID)
             return;
         }
 
-        // What the model is shown. Mode 2 -- the default -- scales the frame and encodes it, and that
-        // is all: the game is going to tone map this picture later, so tone mapping it here as well
-        // shows the model a doubly compressed image. Measured against Cyberpunk's own numbers, the
-        // Reinhard proxy handed the model a scene value of 1.0 as 0.55 and 1.5 as 0.64 -- flat, dark,
-        // and nothing like the finished frame it was trained on. The model then synthesised weakly,
-        // judged tone on a picture that does not exist, and its answer had to be un-crushed on the way
-        // back. Mode 0 keeps that old curve, mode 1 the fitted one.
-        // A soft knee instead of a hard ceiling. Anything above 0.75 is rolled off rather than
-        // clipped, so the model is never shown a field of flat white whose blown pixels flip between
-        // frames -- unstable input is unstable output, and this is where a bright scene would produce
-        // it. The resolve reproduces this exactly, so the two agree on what the frame's own proxy is.
-        // The classic soft knee, or -- when the reversible proxy is on -- the unclipped Neutwo encode
-        // that shows the model highlight gradation the knee throws away. Reached only when the frame
-        // is not passthrough (handled and returned above), so NeutwoEncode never sees a tone-mapped
-        // frame. Both are undone by the resolve: the knee approximately, Neutwo exactly.
+        // The chosen proxy curve is reproduced during matched-residual composition.
+        // Passthrough has already returned, so these curves only receive linear HDR.
         float3 normalized = frame / WhitePoint();
         float3 display;
         if (gReversibleMode == 0)

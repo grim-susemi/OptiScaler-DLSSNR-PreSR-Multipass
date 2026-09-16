@@ -163,7 +163,6 @@ Reference: official master `5ee53e38`. Each group states why its changed files a
 - `OptiScaler/shaders/dlssnr/DlssNr_Dx12.cpp`
 - `OptiScaler/shaders/dlssnr/DlssNr_Dx12.h`
 - `OptiScaler/shaders/dlssnr/DlssNr_Dx12_DeferredSr.cpp`
-- `OptiScaler/shaders/dlssnr/DlssNr_Dx12_Encode.cpp`
 - `OptiScaler/shaders/dlssnr/DlssNr_Dx12_Enlarge.cpp`
 - `OptiScaler/shaders/dlssnr/DlssNr_Dx12_FinishedCompose.cpp`
 - `OptiScaler/shaders/dlssnr/DlssNr_Dx12_FinishedQueue.cpp`
@@ -190,6 +189,7 @@ Reference: official master `5ee53e38`. Each group states why its changed files a
 - `OptiScaler/shaders/dlssnr/precompile/DlssNr_Shader_Vk.h`
 - `OptiScaler/shaders/dlssnr/precompile/DlssNr_Shader_Vk.spv`
 - `OptiScaler/shaders/dlssnr/precompile/dlssnr.hlsl`
+- `OptiScaler/shaders/dlssnr/precompile/dlssnr_common.hlsli`
 - `OptiScaler/shaders/dlssnr/precompile/dlssnr_finished_color.hlsl`
 - `OptiScaler/shaders/dlssnr/precompile/dlssnr_finished_color_Shader.cso`
 - `OptiScaler/shaders/dlssnr/precompile/dlssnr_finished_color_Shader.h`

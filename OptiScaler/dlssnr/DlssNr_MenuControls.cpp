@@ -143,71 +143,77 @@ void RenderModel(Config* config)
 {
     bool unlockPasses = config->DlssNrUnlockPasses.value_or_default();
     const int menuPassLimit = unlockPasses ? 10 : 2;
-    {
-        static int passes = 1;
-        static bool editingPasses = false;
-        if (!editingPasses)
-            passes = (int) std::clamp(config->DlssNrPasses.value_or_default(), 1u, (unsigned int) menuPassLimit);
-
-        const auto text = ImGui::GetStyleColorVec4(ImGuiCol_Text);
-        const float brightness = std::max({ text.x, text.y, text.z });
-        const auto colour = passes == 1
-                                ? ImVec4(brightness * 0.35f, brightness * 0.75f, brightness * 0.45f, text.w)
-                                : ImVec4(brightness * 0.80f, brightness * 0.35f, brightness * 0.32f, text.w);
-        ImGui::PushStyleColor(ImGuiCol_Text, colour);
-        ImGui::SliderInt("##Model passes", &passes, 1, menuPassLimit, "%d", ImGuiSliderFlags_AlwaysClamp);
-        editingPasses = ImGui::IsItemActive();
-        if (ImGui::IsItemDeactivatedAfterEdit())
-            config->DlssNrPasses = (uint32_t) std::clamp(passes, 1, menuPassLimit);
-        ImGui::PopStyleColor();
-        ImGui::SameLine();
-        ImGui::TextUnformatted("Model passes");
-    }
+    static int passes = 1;
+    static bool editingPasses = false;
+    if (!editingPasses)
+        passes = (int) std::clamp(config->DlssNrPasses.value_or_default(), 1u, (unsigned) menuPassLimit);
+    ImGui::SliderInt("Model passes", &passes, 1, menuPassLimit, "%d", ImGuiSliderFlags_AlwaysClamp);
+    editingPasses = ImGui::IsItemActive();
+    if (ImGui::IsItemDeactivatedAfterEdit())
+        config->DlssNrPasses = (uint32_t) std::clamp(passes, 1, menuPassLimit);
     if (ImGui::Checkbox("Unlock up to 10 passes", &unlockPasses))
     {
         config->DlssNrUnlockPasses = unlockPasses;
         config->DlssNrPasses = std::clamp(config->DlssNrPasses.value_or_default(), 1u, unlockPasses ? 10u : 2u);
     }
 
+    static unsigned selectedPass = 0;
+    const auto selectedLabel = std::format("Pass {}", selectedPass + 1);
+    if (ImGui::BeginCombo("Edit pass", selectedLabel.c_str()))
+    {
+        for (unsigned pass = 0; pass <= std::size(config->DlssNrPassOverrides); ++pass)
+        {
+            const auto label = std::format("Pass {}", pass + 1);
+            if (ImGui::Selectable(label.c_str(), selectedPass == pass))
+                selectedPass = pass;
+            if (selectedPass == pass)
+                ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    if (selectedPass >= config->DlssNrPasses.value_or_default())
+        ImGui::TextDisabled("Inactive pass. Settings apply when this pass is enabled.");
+
+    // Distinct widget IDs keep uncommitted slider edits with their selected pass.
+    ImGui::PushID((int) selectedPass);
+    const bool inherited = selectedPass != 0;
+    const auto tuning = [&](auto& intensity, auto& structure, auto& tone, auto& skin, auto& autoMask)
+    {
+        DeferredSlider("Intensity", &intensity, 0.0f, 2.0f,
+                       inherited ? config->DlssNrIntensity.value_or_default() : 1.0f, inherited);
+        DeferredSlider("Local structure", &structure, 0.0f, 2.0f,
+                       inherited ? config->DlssNrLocalStructure.value_or_default() : 1.0f, inherited);
+        DeferredSlider("Local tone", &tone, 0.0f, 2.0f, inherited ? 0.0f : 1.0f, inherited);
+        DeferredSlider("Skin structure", &skin, -1.0f, 2.0f,
+                       inherited ? config->DlssNrSkinStructure.value_or_default() : -1.0f, inherited);
+        bool mask = autoMask.value_or(inherited ? config->DlssNrAutoMask.value_or_default() : true);
+        if (ImGui::Checkbox("Auto skin mask", &mask))
+            autoMask = mask;
+        if (inherited)
+        {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset##mask"))
+                autoMask = std::optional<bool> {};
+        }
+        HelpMarker("Model-based skin selection.");
+    };
     static const char* styles[] = { "Standard", "Natural", "Cinematic" };
     static const char* inheritedStyles[] = { "Auto", "Standard", "Natural", "Cinematic" };
-
-    if (ImGui::TreeNodeEx("Pass 1", ImGuiTreeNodeFlags_DefaultOpen))
+    if (selectedPass == 0)
     {
         int style = (int) std::min(config->DlssNrStyle.value_or_default(), 2u);
         if (ImGui::Combo("Style", &style, styles, IM_ARRAYSIZE(styles)))
             config->DlssNrStyle = (uint32_t) style;
-
-        DeferredSlider("Intensity", &config->DlssNrIntensity, 0.0f, 2.0f, 1.0f);
-        DeferredSlider("Local structure", &config->DlssNrLocalStructure, 0.0f, 2.0f, 1.0f);
-        DeferredSlider("Local tone", &config->DlssNrLocalTone, 0.0f, 2.0f, 1.0f);
-        DeferredSlider("Skin structure", &config->DlssNrSkinStructure, -1.0f, 2.0f, -1.0f);
-        bool mask = config->DlssNrAutoMask.value_or_default();
-        if (ImGui::Checkbox("Auto skin mask", &mask))
-            config->DlssNrAutoMask = mask;
-        HelpMarker("Model-based skin selection.");
-        ImGui::TreePop();
+        tuning(config->DlssNrIntensity, config->DlssNrLocalStructure, config->DlssNrLocalTone,
+               config->DlssNrSkinStructure, config->DlssNrAutoMask);
     }
-
-    if (config->DlssNrPasses.value_or_default() >= 2 && ImGui::TreeNodeEx("Pass 2", ImGuiTreeNodeFlags_DefaultOpen))
+    else
     {
-        InheritedProfileCombo("Style", &config->DlssNrPass2Style, inheritedStyles, IM_ARRAYSIZE(inheritedStyles));
-        DeferredSlider("Intensity", &config->DlssNrPass2Intensity, 0.0f, 2.0f,
-                       config->DlssNrIntensity.value_or_default(), true);
-        DeferredSlider("Local structure", &config->DlssNrPass2LocalStructure, 0.0f, 2.0f,
-                       config->DlssNrLocalStructure.value_or_default(), true);
-        DeferredSlider("Local tone", &config->DlssNrPass2LocalTone, 0.0f, 2.0f, 0.0f, true);
-        DeferredSlider("Skin structure", &config->DlssNrPass2SkinStructure, -1.0f, 2.0f,
-                       config->DlssNrSkinStructure.value_or_default(), true);
-        bool mask = config->DlssNrPass2AutoMask.value_or(config->DlssNrAutoMask.value_or_default());
-        if (ImGui::Checkbox("Auto skin mask", &mask))
-            config->DlssNrPass2AutoMask = mask;
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Reset##mask"))
-            config->DlssNrPass2AutoMask = std::optional<bool> {};
-        ImGui::TreePop();
+        auto& pass = config->DlssNrPassOverrides[selectedPass - 1];
+        InheritedProfileCombo("Style", &pass.style, inheritedStyles, IM_ARRAYSIZE(inheritedStyles));
+        tuning(pass.intensity, pass.structure, pass.tone, pass.skin, pass.autoMask);
     }
-
+    ImGui::PopID();
 }
 
 void RenderBlend(Config* config)

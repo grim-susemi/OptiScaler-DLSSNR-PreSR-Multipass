@@ -148,10 +148,6 @@ float DlssNr_Dx12::State::HoldColor(ID3D12GraphicsCommandList* cmd, ID3D12Device
         nr.heldWhitePoint = whitePoint;
     }
     else
-    {
-        Barrier(cmd, target, state, D3D12_RESOURCE_STATE_COPY_DEST);
-        cmd->CopyResource(target, nr.heldColor);
-        Barrier(cmd, target, D3D12_RESOURCE_STATE_COPY_DEST, state);
-    }
+        CopyTexture(cmd, target, state, nr.heldColor, D3D12_RESOURCE_STATE_COPY_SOURCE);
     return nr.heldWhitePoint;
 }

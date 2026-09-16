@@ -52,31 +52,23 @@ void ModelVk::Impl::Transition(VkCommandBuffer cmd, ImageVk& img, VkImageLayout 
     img.layout = to;
 }
 
-void ModelVk::Impl::Fail(const char* why)
+bool ModelVk::Impl::Fail(const char* why)
 {
-    if (state.failed)
-        return;
-
     state.failed = true;
     state.reason = why;
     LOG_ERROR("DLSS-NR Vulkan unavailable: {}", why);
+    return false;
 }
 
 bool ModelVk::Impl::InitDriver(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device)
 {
     if (!NVNGXProxy::IsVulkanInited() &&
         !NVNGXProxy::InitVulkan(instance, physicalDevice, device, vkGetInstanceProcAddr, vkGetDeviceProcAddr))
-    {
-        Fail("the NVIDIA NGX Vulkan driver could not initialize");
-        return false;
-    }
+        return Fail("the NVIDIA NGX Vulkan driver could not initialize");
     if (!NVNGXProxy::IsVulkanInited() || !NVNGXProxy::VULKAN_GetCapabilityParameters() ||
         !NVNGXProxy::VULKAN_CreateFeature1() || !NVNGXProxy::VULKAN_EvaluateFeature() ||
         !NVNGXProxy::VULKAN_ReleaseFeature() || !NVNGXProxy::VULKAN_DestroyParameters())
-    {
-        Fail("the NVIDIA NGX Vulkan driver interface is incomplete");
-        return false;
-    }
+        return Fail("the NVIDIA NGX Vulkan driver interface is incomplete");
     if (!state.ngxInitialised)
         LOG_INFO("DLSS-NR Vulkan: using the NVIDIA NGX driver dispatcher");
     state.ngxInitialised = true;
@@ -109,8 +101,7 @@ bool ModelVk::Impl::CreateModel(VkCommandBuffer commandBuffer, unsigned int pass
         {
             LOG_ERROR("DLSS-NR Vulkan: capability parameters for pass {} failed 0x{:X}", passIndex + 1,
                       static_cast<unsigned int>(result));
-            Fail("the NVIDIA NGX driver could not allocate capability parameters");
-            return false;
+            return Fail("the NVIDIA NGX driver could not allocate capability parameters");
         }
     }
     auto* parameters = model.parameters;
@@ -129,8 +120,7 @@ bool ModelVk::Impl::CreateModel(VkCommandBuffer commandBuffer, unsigned int pass
                 (existing == model.feature || existing->Id == model.feature->Id))
             {
                 model.feature = nullptr; // owned by the other layer; do not double-release
-                Fail("the NVIDIA NGX driver reused a feature instead of creating an independent NR pass");
-                return false;
+                return Fail("the NVIDIA NGX driver reused a feature instead of creating an independent NR pass");
             }
         }
     }
@@ -138,8 +128,7 @@ bool ModelVk::Impl::CreateModel(VkCommandBuffer commandBuffer, unsigned int pass
     {
         LOG_ERROR("DLSS-NR Vulkan: driver CreateFeature(18), pass {}, failed 0x{:X}", passIndex + 1,
                   static_cast<unsigned int>(result));
-        Fail("the NVIDIA NGX driver could not create an independent Neural Rendering feature");
-        return false;
+        return Fail("the NVIDIA NGX driver could not create an independent Neural Rendering feature");
     }
     return true;
 }
@@ -295,10 +284,7 @@ bool ModelVk::Impl::PrepareModels(VkCommandBuffer cmdBuffer, const DlssNrFrameIn
         // on RDR2 and Enshrouded by dragging the model-resolution slider). Drain the device first.
         // Only the rare resize path reaches here, so the CPU stall is a one-off hitch, not per-frame.
         if (state.device != VK_NULL_HANDLE && vkDeviceWaitIdle(state.device) != VK_SUCCESS)
-        {
-            Fail("the Vulkan device could not retire previous model resources");
-            return false;
-        }
+            return Fail("the Vulkan device could not retire previous model resources");
 
         ReleaseModels();
         state.scratch.Destroy(state.device);
@@ -321,10 +307,7 @@ bool ModelVk::Impl::PrepareModels(VkCommandBuffer cmdBuffer, const DlssNrFrameIn
                         (workScale <= 1.0f || CreateImage(state.outputNative, width, height, working));
 
         if (!ok)
-        {
-            Fail("the pass could not allocate its own surfaces");
-            return false;
-        }
+            return Fail("the pass could not allocate its own surfaces");
 
         state.width = width;
         state.height = height;
@@ -359,10 +342,7 @@ bool ModelVk::Impl::PrepareModels(VkCommandBuffer cmdBuffer, const DlssNrFrameIn
         {
             VkEventCreateInfo info { VK_STRUCTURE_TYPE_EVENT_CREATE_INFO };
             if (vkCreateEvent(device, &info, nullptr, &state.creationReady) != VK_SUCCESS)
-            {
-                Fail("could not allocate the model creation marker");
-                return false;
-            }
+                return Fail("could not allocate the model creation marker");
         }
         else
             vkResetEvent(device, state.creationReady); // rebuild above drained previous GPU users

@@ -11,21 +11,9 @@ auto DlssNr_Dx12::State::ParkNrResource(ID3D12Resource*& resource) -> void
 
 auto DlssNr_Dx12::State::CreateScratch(ID3D12Device* device, DXGI_FORMAT format, unsigned int width, unsigned int height) -> ID3D12Resource*
 {
-    D3D12_HEAP_PROPERTIES heap {};
-    heap.Type = D3D12_HEAP_TYPE_DEFAULT;
-
-    D3D12_RESOURCE_DESC desc {};
-    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    desc.Width = width;
-    desc.Height = height;
-    desc.DepthOrArraySize = 1;
-    desc.MipLevels = 1;
-    desc.Format = format;
-    desc.SampleDesc.Count = 1;
-    desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-    // The model writes its result, so the destination has to be a UAV.
-    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-
+    const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT, 0, 0);
+    const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(format, width, height, 1, 1, 1, 0,
+                                                D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     ID3D12Resource* res = nullptr;
     device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                                     nullptr, IID_PPV_ARGS(&res));
@@ -75,34 +63,22 @@ auto DlssNr_Dx12::State::CreateGuideClone(ID3D12Device* device, ID3D12Resource* 
 auto DlssNr_Dx12::State::ReadableGuide(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList, ID3D12Resource* source,
                                   ID3D12Resource** clone) -> ID3D12Resource*
 {
-    if (source == nullptr || TypedGuideFormat(source->GetDesc().Format) == source->GetDesc().Format)
+    const auto want = source->GetDesc();
+    const auto format = TypedGuideFormat(want.Format);
+    if (format == want.Format)
         return source;
 
-    // A dynamic-resolution game reallocates its depth and motion vectors as the render size moves, so
-    // the clone made for the old size no longer matches -- and CopyResource demands identical
-    // dimensions. Copying a 1970x1108 source into a 984x554 clone is undefined and removes the device,
-    // which is the DRS crash. Rebuild the clone whenever the source's shape has changed under it.
-    if (*clone != nullptr)
+    // Dynamic resolution changes the copy shape; retire the old clone before replacing it.
+    if (*clone)
     {
-        const D3D12_RESOURCE_DESC have = (*clone)->GetDesc();
-        const D3D12_RESOURCE_DESC want = source->GetDesc();
-
-        if (have.Width != want.Width || have.Height != want.Height || have.Format != TypedGuideFormat(want.Format))
-        {
-            // Retired, not released: the previous copy may still be in flight on the game's queue.
+        const auto have = (*clone)->GetDesc();
+        if (have.Width != want.Width || have.Height != want.Height || have.Format != format)
             ParkNrResource(*clone);
-        }
     }
-
-    if (*clone == nullptr)
-    {
+    if (!*clone)
         *clone = CreateGuideClone(device, source);
-
-        if (*clone == nullptr)
-            return nullptr;
-
-        LOG_DEBUG("DLSS-NR cloned a typeless guide as format {}", (int) TypedGuideFormat(source->GetDesc().Format));
-    }
+    if (!*clone)
+        return nullptr;
 
     Barrier(cmdList, source, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
     cmdList->CopyResource(*clone, source);

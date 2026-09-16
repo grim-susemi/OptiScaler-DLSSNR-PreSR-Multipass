@@ -169,7 +169,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     // enlarged during the resolve while the frame underneath stays full size and untouched.
     auto* modelInput = nr.colorCopy;
 
-    if (reduced && nr.colorSmall != nullptr)
+    if (reduced)
     {
         bool built = false;
 
@@ -187,7 +187,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
             if (nr.superDown == nullptr)
                 nr.superDown = new OS_Dx12("DLSS-NR supersample down", device, false, nrScaler);
 
-            if (nr.superUp != nullptr && nr.superUp->DispatchResources(cmdList, nr.colorCopy, nr.colorSmall))
+            if (nr.superUp->DispatchResources(cmdList, nr.colorCopy, nr.colorSmall))
             {
                 Barrier(cmdList, nr.colorSmall, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -308,7 +308,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
 
     nr.reset = result != NVSDK_NGX_Result_Success;
 
-    if (result == NVSDK_NGX_Result_Success && finalAnswer != nullptr)
+    if (result == NVSDK_NGX_Result_Success)
     {
         // Resolve takes the difference between what the model returned and what it was shown, and adds
         // that back to the frame. At strength zero the result is what the upscaler produced, exactly, and
@@ -324,7 +324,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         // Downsample the model answer to native for composition; fall back to the working-size pair.
         // The final answer is NPSR and the native output rests in UAV.
         bool superDownOk = false;
-        if (workScale > 1.0f && nr.superDown != nullptr && nr.outputNative != nullptr &&
+        if (workScale > 1.0f && nr.superDown != nullptr &&
             nr.superDown->DispatchResources(cmdList, finalAnswer, nr.outputNative))
         {
             Barrier(cmdList, nr.outputNative, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
@@ -381,8 +381,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         }
         else if (!targetSupportsUav)
         {
-            // The resolve target was made writable even while private DLSS was
-            // warming up. Restore it before the common end-of-frame transition.
+            // Restore the resolve target even while the private upscaler is warming up.
             Barrier(cmdList, nr.hdrCopy, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                     D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         }
@@ -399,7 +398,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
 
         }
     }
-    else if (result != NVSDK_NGX_Result_Success)
+    else
     {
         nr.failed = true;
         nr.reason = "the Neural Rendering pass failed";
@@ -433,7 +432,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         Barrier(cmdList, nr.motionClone, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                 D3D12_RESOURCE_STATE_COPY_DEST);
 
-    if (reduced && nr.colorSmall != nullptr)
+    if (reduced)
         Barrier(cmdList, nr.colorSmall, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                 D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 

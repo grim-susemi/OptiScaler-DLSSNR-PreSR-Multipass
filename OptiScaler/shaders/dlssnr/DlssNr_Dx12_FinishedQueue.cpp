@@ -15,9 +15,7 @@ auto DlssNr_Dx12::State::FinishedPictureResetCommandList(ID3D12CommandList* cmd)
     lifetime.ResetRecording(cmd);
     deferredSr.lifetime.ResetRecording(cmd);
     captureFrames.ResetRecording(cmd);
-    if (enlarger) enlarger->lifetime.ResetRecording(cmd);
-    for (auto& old : retiredEnlargers) old->lifetime.ResetRecording(cmd);
-    CollectEnlargers();
+    enlargementLifetime.ResetRecording(cmd);
     ID3D12CommandList* real = nullptr;
     auto* identity = Util::CheckForRealObject(__FUNCTION__, cmd, (IUnknown**)&real) ? real : cmd;
     if (enlarger && !enlarger->submitted && enlarger->creation == identity)
@@ -73,9 +71,7 @@ auto DlssNr_Dx12::State::FinishedPictureSubmitted(ID3D12CommandQueue* queue, UIN
     lifetime.Submitted(queue, count, lists);
     deferredSr.lifetime.Submitted(queue, count, lists);
     captureFrames.Submitted(queue, count, lists);
-    if (enlarger) enlarger->lifetime.Submitted(queue, count, lists);
-    for (auto& old : retiredEnlargers) old->lifetime.Submitted(queue, count, lists);
-    CollectEnlargers();
+    enlargementLifetime.Submitted(queue, count, lists);
     if (enlarger && !enlarger->submitted)
     {
         ID3D12CommandQueue* real = nullptr;

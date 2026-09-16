@@ -90,7 +90,7 @@ struct ModelVk::Impl
     bool saidEncoding = false;
     bool warnedDeferred = false;
     std::mutex mutex;
-    uint64_t retryGeneration = ReadControlRequests().retryGeneration;
+    uint64_t retryGeneration = RetryGeneration();
     Impl(DlssNr_Vk& shader) { state.pass = &shader; }
     ~Impl()
     {
@@ -98,7 +98,7 @@ struct ModelVk::Impl
         ClearStatus(this);
     }
 
-    void Fail(const char* why);
+    bool Fail(const char* why);
     bool CreateImage(ImageVk& img, uint32_t width, uint32_t height, VkFormat format);
     void Transition(VkCommandBuffer cmd, ImageVk& img, VkImageLayout to);
     bool InitDriver(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device);

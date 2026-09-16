@@ -59,15 +59,12 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
                             state.frames });
         }
     } report { this };
-    const auto requests = ReadControlRequests();
-    if (requests.retryGeneration != retryGeneration)
+    const auto requestedRetry = RetryGeneration();
+    if (requestedRetry != retryGeneration)
     {
-        retryGeneration = requests.retryGeneration;
+        retryGeneration = requestedRetry;
         if (state.device && vkDeviceWaitIdle(state.device) != VK_SUCCESS)
-        {
-            Fail("the Vulkan device could not retire work for retry");
-            return false;
-        }
+            return Fail("the Vulkan device could not retire work for retry");
         Shutdown();
         state.failed = false;
         state.reason = "";
@@ -130,10 +127,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
 
     // The shader belongs to one device. Replacement features own replacement models.
     if (state.device != VK_NULL_HANDLE && state.device != device)
-    {
-        Fail("a Vulkan model was dispatched on a different device");
-        return false;
-    }
+        return Fail("a Vulkan model was dispatched on a different device");
     state.device = device;
 
     if (!PrepareModels(cmdBuffer, frame, width, height, workWidth, workHeight, workScale, passes))
@@ -189,17 +183,14 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     if (!state.pass->Dispatch(cmdBuffer, encode, colourInfo.ImageView,
                               VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, state.proxy.info.ImageView,
                               state.keep.info.ImageView, inputLayout))
-    {
-        Fail("the encode dispatch failed");
-        return false;
-    }
+        return Fail("the encode dispatch failed");
 
     // The model's input: the full proxy, or a downsampled copy of it when the working scale is below
     // the frame. Mirrors the D3D12 path -- the encode always writes a full proxy, and a separate
     // downsample makes the small one the model actually reads.
     ImageVk* modelInput = &state.proxy;
 
-    if (reduced && state.proxySmall.Valid())
+    if (reduced)
     {
         bool built = false;
 
@@ -213,10 +204,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
             {
                 // Drain submitted work before replacing filter pipelines and descriptor resources.
                 if (state.device != VK_NULL_HANDLE && vkDeviceWaitIdle(state.device) != VK_SUCCESS)
-                {
-                    Fail("the Vulkan device could not retire the supersampling filters");
-                    return false;
-                }
+                    return Fail("the Vulkan device could not retire the supersampling filters");
                 state.superUp.reset();
                 state.superDown.reset();
                 state.nrScaler = wantScaler;
@@ -234,16 +222,11 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
             VkImageInfo upin = state.proxy.info;
             VkImageInfo upout = state.proxySmall.info;
 
-            if (state.superUp && state.superUp->IsInit() && state.superUp->DispatchResources(cmdBuffer, upin, upout))
-                built = true;
-            else
+            built = state.superUp->IsInit() && state.superUp->DispatchResources(cmdBuffer, upin, upout);
+            if (!built && !warnedVkSuper)
             {
-
-                if (!warnedVkSuper)
-                {
-                    warnedVkSuper = true;
-                    LOG_WARN("DLSS-NR Vulkan supersample: upscaler unavailable, falling back to box enlarge.");
-                }
+                warnedVkSuper = true;
+                LOG_WARN("DLSS-NR Vulkan supersample: upscaler unavailable, falling back to box enlarge.");
             }
         }
 
@@ -260,10 +243,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
             if (!state.pass->Dispatch(cmdBuffer, down, state.proxy.info.ImageView, VK_NULL_HANDLE,
                                       VK_NULL_HANDLE, VK_NULL_HANDLE, state.proxySmall.info.ImageView, VK_NULL_HANDLE,
                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
-            {
-                Fail("the downsample dispatch failed");
-                return false;
-            }
+                return Fail("the downsample dispatch failed");
         }
 
         modelInput = &state.proxySmall;
@@ -318,8 +298,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     if (evaluated != NVSDK_NGX_Result_Success)
     {
         LOG_ERROR("DLSS-NR Vulkan: evaluate returned 0x{:X}", static_cast<unsigned int>(evaluated));
-        Fail("the Neural Rendering pass failed");
-        return false;
+        return Fail("the Neural Rendering pass failed");
     }
 
     // -----------------------------------------------------------------------------------------
@@ -333,7 +312,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     ImageVk* resolveProxy = modelInput;
     ImageVk* resolveAnswer = answer;
 
-    if (workScale > 1.0f && state.superDown && state.superDown->IsInit() && state.outputNative.Valid())
+    if (workScale > 1.0f && state.superDown && state.superDown->IsInit())
     {
         Transition(cmdBuffer, *answer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         Transition(cmdBuffer, state.outputNative, VK_IMAGE_LAYOUT_GENERAL);
@@ -355,10 +334,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     if (!state.pass->Dispatch(cmdBuffer, resolve, resolveProxy->info.ImageView,
                               resolveAnswer->info.ImageView, state.keep.info.ImageView, VK_NULL_HANDLE, target.ImageView, VK_NULL_HANDLE,
                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
-    {
-        Fail("the resolve dispatch failed");
-        return false;
-    }
+        return Fail("the resolve dispatch failed");
 
     // Close it, and read the pair from three frames ago -- retired by now, so the read does not wait.
     if (state.queryPool != VK_NULL_HANDLE)

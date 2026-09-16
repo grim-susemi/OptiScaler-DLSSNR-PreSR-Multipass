@@ -4,12 +4,6 @@
 #include "../../OptiScaler/upscalers/ShaderPipeline_Dx12.h"
 #include "../../OptiScaler/dlssnr/DlssNr_HoldParameters_Dx12.h"
 
-namespace DlssNr::NgxDiagnostics
-{
-Scope::Scope() {}
-Scope::~Scope() {}
-}
-
 // Routing seam: hardware tests separately exercise the real compatibility loader.
 namespace CompatibilityMock {
 bool available=false;
@@ -263,13 +257,9 @@ int main()
     assert(DlssNr::ReadStatus(DlssNr::Backend::Dx12).running);
     DlssNr::ClearStatus(&output);
     assert(!DlssNr::ReadStatus(DlssNr::Backend::Dx12).running);
-    const auto requestsBefore = DlssNr::ReadControlRequests();
+    const auto retryBefore = DlssNr::RetryGeneration();
     DlssNr::RetryAfterFailure();
-    DlssNr::RequestCapture(8);
-    const auto requestsAfter = DlssNr::ReadControlRequests();
-    assert(requestsAfter.retryGeneration == requestsBefore.retryGeneration + 1);
-    assert(requestsAfter.captureGeneration == requestsBefore.captureGeneration + 1);
-    assert(requestsAfter.captureFrames == 8);
+    assert(DlssNr::RetryGeneration() == retryBefore + 1);
 
     // The shared runner routes resources backwards, then executes stages forwards.
     ID3D12Resource intermediate;

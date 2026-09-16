@@ -180,12 +180,6 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D12_Init_Ext(unsigned long long InApp
         if (NVNGXProxy::NVNGXModule() != nullptr && NVNGXProxy::D3D12_Init_Ext() != nullptr)
         {
             LOG_INFO("calling NVNGXProxy::D3D12_Init_Ext");
-            if (InSDKVersion >= 0x14)
-                DlssNr::NgxDiagnostics::Install(localFeatureInfo.LoggingInfo);
-            DlssNr::NgxDiagnostics::Scope nrInitTrace;
-            LOG_INFO("NR diagnostic driver init: identity={} sdk=0x{:X} device={}", InApplicationId,
-                     (unsigned)InSDKVersion, (void*)InDevice);
-
             auto result = NVNGXProxy::D3D12_Init_Ext()(InApplicationId, InApplicationDataPath, InDevice, InSDKVersion,
                                                        &localFeatureInfo);
             LOG_INFO("calling NVNGXProxy::D3D12_Init_Ext result: {0:X}", (UINT) result);
@@ -254,12 +248,6 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D12_Init(unsigned long long InApplica
         if (NVNGXProxy::NVNGXModule() != nullptr && NVNGXProxy::D3D12_Init() != nullptr)
         {
             LOG_INFO("calling NVNGXProxy::D3D12_Init");
-            if (InSDKVersion >= 0x14)
-                DlssNr::NgxDiagnostics::Install(localFeatureInfo.LoggingInfo);
-            DlssNr::NgxDiagnostics::Scope nrInitTrace;
-            LOG_INFO("NR diagnostic driver init: identity={} sdk=0x{:X} device={}", InApplicationId,
-                     (unsigned)InSDKVersion, (void*)InDevice);
-
             auto result = NVNGXProxy::D3D12_Init()(InApplicationId, InApplicationDataPath, InDevice, &localFeatureInfo,
                                                    InSDKVersion);
 
@@ -317,12 +305,6 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D12_Init_ProjectID(const char* InProj
         if (NVNGXProxy::NVNGXModule() != nullptr && NVNGXProxy::D3D12_Init_ProjectID() != nullptr)
         {
             LOG_INFO("calling NVNGXProxy::D3D12_Init_ProjectID");
-            if (InSDKVersion >= 0x14)
-                DlssNr::NgxDiagnostics::Install(localFeatureInfo.LoggingInfo);
-            DlssNr::NgxDiagnostics::Scope nrInitTrace;
-            LOG_INFO("NR diagnostic driver init: identity={} sdk=0x{:X} device={}", InProjectId,
-                     (unsigned)InSDKVersion, (void*)InDevice);
-
             auto result =
                 NVNGXProxy::D3D12_Init_ProjectID()(InProjectId, InEngineType, InEngineVersion, InApplicationDataPath,
                                                    InDevice, InSDKVersion, &localFeatureInfo);

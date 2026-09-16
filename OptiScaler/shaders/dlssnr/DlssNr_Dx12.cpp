@@ -221,9 +221,7 @@ void DlssNr_Dx12::Retire(std::unique_ptr<DlssNr_Dx12> owner)
 bool DlssNr_Dx12::ReadyToDestroy()
 {
     std::lock_guard lock(_state->mutex);
-    _state->CollectEnlargers();
-    if (_state->collectingEnlargers) return false;
-    if (!_state->retiredEnlargers.empty() || (_state->enlarger && !_state->enlarger->lifetime.Idle())) return false;
+    if (!_state->enlargementLifetime.Idle()) return false;
     if (!_state->lifetime.Idle() || !_state->deferredSr.lifetime.Idle()) return false;
     for (auto& model : _state->nr.models)
         if (!model.Idle()) return false;
@@ -349,11 +347,8 @@ bool DlssNr_Dx12::Dispatch(ID3D12GraphicsCommandList* cmd, ID3D12Resource* colou
         const auto source = colour->GetDesc(), target = output->GetDesc();
         if (source.Width != target.Width || source.Height != target.Height || source.Format != target.Format)
             return false;
-        Barrier(cmd, colour, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
-        Barrier(cmd, output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
-        cmd->CopyResource(output, colour);
-        Barrier(cmd, colour, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-        Barrier(cmd, output, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        CopyTexture(cmd, output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                    colour, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     }
     return _state->Run(cmd, output, depth, motion, info, queue);
 }

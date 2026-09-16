@@ -4,21 +4,14 @@
 void DlssNr_Dx12::State::ReleaseEnlarger()
 {
     if (!enlarger) return;
-    retiredEnlargers.push_back(std::move(enlarger));
-    CollectEnlargers();
-}
-
-void DlssNr_Dx12::State::CollectEnlargers()
-{
-    if (collectingEnlargers) return;
-    collectingEnlargers = true;
-    // Release NGX only after container mutation: its destruction can re-enter queue hooks.
-    std::vector<std::unique_ptr<Enlarger>> completed;
-    for (auto& old : retiredEnlargers)
-        if (old->lifetime.Idle()) completed.push_back(std::move(old));
-    std::erase_if(retiredEnlargers, [](const auto& old) { return !old; });
-    completed.clear();
-    collectingEnlargers = false;
+    auto* retired = enlarger.release();
+    ++retiredEnlargers;
+    enlargementLifetime.Retire([this, retired]
+    {
+        delete retired;
+        --retiredEnlargers;
+    });
+    enlargementLifetime.BeginGeneration();
 }
 
 ID3D12Resource* DlssNr_Dx12::State::EnlargeMatchedResidual(ID3D12GraphicsCommandList* cmd,
@@ -55,10 +48,10 @@ ID3D12Resource* DlssNr_Dx12::State::EnlargeMatchedResidual(ID3D12GraphicsCommand
     if (enlarger && (enlarger->w != w || enlarger->h != h || enlarger->outW != resolve.Width ||
         enlarger->outH != resolve.Height || (queue && enlarger->queue.Get() != queue) ||
         enlarger->depthInverted != frame.DepthInverted)) ReleaseEnlarger();
-    CollectEnlargers();
+    enlargementLifetime.Collect();
     if (!enlarger)
     {
-        if (retiredEnlargers.size() >= 4) return say("Waiting for retired DLSS enlargement work.");
+        if (retiredEnlargers >= 4) return say("Waiting for retired DLSS enlargement work.");
         enlarger = std::make_unique<Enlarger>();
         auto& g = *enlarger;
         g.w = w; g.h = h; g.outW = resolve.Width; g.outH = resolve.Height;
@@ -72,7 +65,7 @@ ID3D12Resource* DlssNr_Dx12::State::EnlargeMatchedResidual(ID3D12GraphicsCommand
         if (!g.input || !g.output || !g.depth || !g.motion || !g.exposure)
             return say("DLSS enlargement resource allocation failed; use Retry.");
         lifetime.Record(cmd);
-        g.lifetime.Record(cmd);
+        enlargementLifetime.Record(cmd);
         DlssNrConstants unit {}; unit.Mode = DlssNrMode_UnitExposure; unit.Width = unit.Height = 1;
         if (!shader.DispatchPass(cmd, unit, proxy, nullptr, nullptr, nullptr, g.exposure.Get(), nullptr))
             return say("DLSS enlargement exposure initialization failed; use Retry.");
@@ -99,7 +92,7 @@ ID3D12Resource* DlssNr_Dx12::State::EnlargeMatchedResidual(ID3D12GraphicsCommand
         frame.DepthSubrectBaseX, frame.DepthSubrectBaseY, frame.MotionSubrectBaseX, frame.MotionSubrectBaseY);
     if (!regions.depth.valid() || !regions.motion.valid()) return say("DLSS enlargement needs valid depth and motion.");
     lifetime.Record(cmd);
-    g.lifetime.Record(cmd);
+    enlargementLifetime.Record(cmd);
     DlssNrConstants encode {}; encode.Mode = DlssNrMode_EncodeProxyResidual;
     encode.Width = w; encode.Height = h; encode.Passthrough = resolve.Passthrough;
     bool ok = shader.DispatchPass(cmd, encode, proxy, answer, nullptr, nullptr, g.input.Get(), nullptr);

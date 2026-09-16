@@ -2,6 +2,7 @@
 #include "DlssNr_Status.h"
 
 #include <array>
+#include <atomic>
 #include <mutex>
 
 namespace DlssNr
@@ -16,7 +17,7 @@ struct PublishedStatus
 
 std::mutex statusMutex;
 std::array<PublishedStatus, 2> published;
-ControlRequests requests;
+std::atomic_uint64_t retryGeneration { 0 };
 } // namespace
 
 StatusSnapshot ReadStatus(Backend backend)
@@ -39,24 +40,8 @@ void ClearStatus(const void* owner)
             status = {};
 }
 
-ControlRequests ReadControlRequests()
-{
-    std::lock_guard lock(statusMutex);
-    return requests;
-}
-
-void RetryAfterFailure()
-{
-    std::lock_guard lock(statusMutex);
-    ++requests.retryGeneration;
-}
-
-void RequestCapture(unsigned int frames)
-{
-    std::lock_guard lock(statusMutex);
-    requests.captureFrames = frames;
-    ++requests.captureGeneration;
-}
+uint64_t RetryGeneration() { return retryGeneration.load(); }
+void RetryAfterFailure() { ++retryGeneration; }
 
 std::optional<double> LastGpuTime() { return ReadStatus(Backend::Dx12).gpuTime; }
 } // namespace DlssNr

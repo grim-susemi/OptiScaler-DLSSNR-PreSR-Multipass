@@ -152,14 +152,8 @@ auto DlssNr_Dx12::State::LateContext::Capture(ID3D12GraphicsCommandList* cmd, NV
     // Copy at the NGX seam, where guide states and lifetimes are defined. Keep typed,
     // shader-readable copies until both the producing queue and NR have finished.
     for (auto pair : { std::pair { depth, slot.depth.Get() }, std::pair { motion, slot.motion.Get() } })
-    {
-        Barrier(cmd, pair.first, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-                      D3D12_RESOURCE_STATE_COPY_SOURCE);
-        cmd->CopyResource(pair.second, pair.first);
-        Barrier(cmd, pair.first, D3D12_RESOURCE_STATE_COPY_SOURCE,
-                      D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-        // The copy returns to COPY_DEST after the late dispatch.
-    }
+        CopyTexture(cmd, pair.second, D3D12_RESOURCE_STATE_COPY_DEST,
+                    pair.first, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     slot.frame = {};
     auto& frame = slot.frame;
     unsigned flags = 0, gameReset = 0;
@@ -191,9 +185,8 @@ auto DlssNr_Dx12::State::LateContext::CaptureResidual(ID3D12GraphicsCommandList*
         Say("The upscaled changes could not be saved.");
         return false;
     }
-    Barrier(cmd, residual, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    cmd->CopyResource(slot.residual.Get(), residual);
-    Barrier(cmd, residual, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    CopyTexture(cmd, slot.residual.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+                residual, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     slot.cleanSceneValid = false;
     if (Config::Instance()->DlssNrHdrTransfer.value_or_default() && sceneLinear &&
         Clone(slot.cleanScene, clean))
@@ -201,9 +194,7 @@ auto DlssNr_Dx12::State::LateContext::CaptureResidual(ID3D12GraphicsCommandList*
         const auto arrival = Config::Instance()->OutputResourceBarrier.has_value()
                                  ? (D3D12_RESOURCE_STATES) Config::Instance()->OutputResourceBarrier.value()
                                  : D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-        Barrier(cmd, clean, arrival, D3D12_RESOURCE_STATE_COPY_SOURCE);
-        cmd->CopyResource(slot.cleanScene.Get(), clean);
-        Barrier(cmd, clean, D3D12_RESOURCE_STATE_COPY_SOURCE, arrival);
+        CopyTexture(cmd, slot.cleanScene.Get(), D3D12_RESOURCE_STATE_COPY_DEST, clean, arrival);
         slot.cleanSceneValid = true;
     }
     if (!slot.cleanSceneValid)

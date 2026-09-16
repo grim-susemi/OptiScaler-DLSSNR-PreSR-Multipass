@@ -17,8 +17,8 @@ auto DlssNr_Dx12::State::ConsumeControls() -> void
         ReleaseEnlarger();
         enlargementStatus.clear();
     }
-    const auto requested = DlssNr::ReadControlRequests();
-    if (requested.retryGeneration != controls.retryGeneration)
+    const auto requestedRetry = DlssNr::RetryGeneration();
+    if (requestedRetry != retryGeneration)
     {
         for (auto& model : nr.models)
             model.Release();
@@ -29,9 +29,7 @@ auto DlssNr_Dx12::State::ConsumeControls() -> void
         nr.reason = "";
         nr.reset = true;
     }
-    if (requested.captureGeneration != controls.captureGeneration)
-        captureFrames.request(requested.captureFrames);
-    controls = requested;
+    retryGeneration = requestedRetry;
 }
 
 auto DlssNr_Dx12::State::Publish() -> void

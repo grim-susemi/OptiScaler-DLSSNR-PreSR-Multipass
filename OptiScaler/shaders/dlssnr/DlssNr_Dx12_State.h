@@ -41,6 +41,7 @@
 
 using DlssNr::Profiles::PassSettings;
 using DlssNr::Barrier;
+using DlssNr::CopyTexture;
 
 struct DlssNr_Dx12::State
 {
@@ -51,7 +52,6 @@ struct DlssNr_Dx12::State
     {
         template <typename T> using ComPtr = Microsoft::WRL::ComPtr<T>;
         std::unique_ptr<DlssNr::PrivateUpscalerDx12> dlss;
-        DlssNr::GpuLifetime lifetime;
         ComPtr<ID3D12Resource> input, output, depth, motion, exposure;
         ComPtr<ID3D12CommandQueue> queue;
         ID3D12CommandList* creation = nullptr;
@@ -61,11 +61,10 @@ struct DlssNr_Dx12::State
         ~Enlarger() { dlss.reset(); } // Release NGX before its borrowed input/output resources.
     };
     std::unique_ptr<Enlarger> enlarger;
-    std::vector<std::unique_ptr<Enlarger>> retiredEnlargers;
-    bool collectingEnlargers = false;
+    DlssNr::GpuLifetime enlargementLifetime;
+    unsigned retiredEnlargers = 0;
     std::string enlargementStatus;
     void ReleaseEnlarger();
-    void CollectEnlargers();
     ID3D12Resource* EnlargeMatchedResidual(ID3D12GraphicsCommandList* cmd, ID3D12Device* device,
         ID3D12Resource* proxy, ID3D12Resource* answer, ID3D12Resource* depth, ID3D12Resource* motion,
         const DlssNrFrameInfo& frame, const DlssNrConstants& resolve, bool reset, ID3D12CommandQueue* queue);
@@ -342,7 +341,7 @@ struct DlssNr_Dx12::State
     ID3D12Resource* buffer = nullptr;
     D3D12_RESOURCE_STATES bufferState = D3D12_RESOURCE_STATE_COMMON;
     uint32_t featureFlags = 0;
-    DlssNr::ControlRequests controls = DlssNr::ReadControlRequests();
+    uint64_t retryGeneration = DlssNr::RetryGeneration();
     explicit State(DlssNr_Dx12& owner) : shader(owner) {}
     void ConsumeControls();
     void Publish();

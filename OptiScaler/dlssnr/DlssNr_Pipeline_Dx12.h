@@ -18,6 +18,17 @@ inline void Barrier(ID3D12GraphicsCommandList* commands, ID3D12Resource* resourc
     commands->ResourceBarrier(1, &barrier);
 }
 
+// Copy matching textures and restore both arrival states.
+inline void CopyTexture(ID3D12GraphicsCommandList* cmd, ID3D12Resource* target, D3D12_RESOURCE_STATES targetState,
+                        ID3D12Resource* source, D3D12_RESOURCE_STATES sourceState)
+{
+    Barrier(cmd, source, sourceState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    Barrier(cmd, target, targetState, D3D12_RESOURCE_STATE_COPY_DEST);
+    cmd->CopyResource(target, source);
+    Barrier(cmd, source, D3D12_RESOURCE_STATE_COPY_SOURCE, sourceState);
+    Barrier(cmd, target, D3D12_RESOURCE_STATE_COPY_DEST, targetState);
+}
+
 inline bool FormatCanHoldLinearHdr(DXGI_FORMAT format)
 {
     switch (format)

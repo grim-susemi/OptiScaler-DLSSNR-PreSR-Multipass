@@ -72,28 +72,11 @@ auto DlssNr_Dx12::State::DeferredSrContext::Allocate(Generation& g) -> bool
 auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cmd, NVSDK_NGX_Parameter* source, unsigned long long epoch,
                     unsigned long long submittedEpoch, ID3D12CommandQueue* queue, bool interop, bool rayReconstruction) -> void
 {
-    if (pending.cmd && current)
-    {
-        LOG_DEBUG(
-            "DLSS-NR deferred: Before entry with a stale pending (previous After never ran) -> reset. epoch {}",
-            epoch);
-        current->reset = true; // abandoned/failed main SR call
-    }
+    const bool reset = pending.cmd || !current || current->reset;
     pending = {};
-    struct ResetOnGap
-    {
-        DeferredSrContext& state;
-        unsigned long long epoch;
-        ~ResetOnGap()
-        {
-            if (!state.pending.cmd && state.current)
-            {
-                LOG_DEBUG("DLSS-NR deferred: Before returned without arming a seam; reset history. epoch {}",
-                          epoch);
-                state.current->reset = true;
-            }
-        }
-    } resetOnGap { *this, epoch };
+    // Any gap resets history; restore the previous reset state only after arming a valid pair.
+    if (current)
+        current->reset = true;
     lifetime.Collect();
     const auto& cfg = *Config::Instance();
     if (cfg.DlssNrDebugView.value_or_default() != 0 ||
@@ -232,7 +215,6 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
     // so a second upscale in the same bridge submission is still rejected.
     if (g.began && g.lastBeginEpoch == epoch)
     {
-        g.reset = true;
         Say("inactive: more than one upscale in a submission epoch");
         return;
     }
@@ -317,7 +299,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
                              : UInt(source, NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags)) &
          NVSDK_NGX_DLSS_Feature_Flags_IsHDR) != 0 &&
         DlssNr::FormatCanHoldLinearHdr(outDesc.Format);
-    frame.Reset = UInt(source, NVSDK_NGX_Parameter_Reset) != 0 || g.reset;
+    frame.Reset = UInt(source, NVSDK_NGX_Parameter_Reset) != 0 || reset;
     frame.MvScaleX = Float(source, NVSDK_NGX_Parameter_MV_Scale_X, 1);
     frame.MvScaleY = Float(source, NVSDK_NGX_Parameter_MV_Scale_Y, 1);
     frame.PreExposure = std::max(Float(source, NVSDK_NGX_Parameter_DLSS_Pre_Exposure, 1), 1e-4f);
@@ -406,7 +388,6 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
         if (!accumulated)
         {
             ok = false;
-            g.reset = true;
             Say("waiting for RR residual accumulation; clean game frame retained");
         }
         else if (cfg.DlssNrFinishedPicture.value_or_default())
@@ -427,6 +408,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
         g.smallReadable = true;
         if (ok)
         {
+            g.reset = reset;
             // Snapshot before the main SR call can rewrite its parameter table.
             auto& f = g.frame;
             f.color = { g.residualInput, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE };
@@ -465,7 +447,6 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
     }
     else
     {
-        g.reset = true;
         Say("waiting for NR evaluation; clean SR frame retained");
     }
     Barrier(cmd, g.edited, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,

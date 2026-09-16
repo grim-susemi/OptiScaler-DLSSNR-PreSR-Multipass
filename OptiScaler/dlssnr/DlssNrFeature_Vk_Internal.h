@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DlssNrFeature_Vk.h"
+#include "DlssNr_Image_Vk.h"
 #include "DlssNrFeature_Dx12.h"
 #include <shaders/dlssnr/DlssNr_Guides.h>
 #include "PassProfiles.h"
@@ -17,22 +18,6 @@ struct NgxPassVk
 {
     NVSDK_NGX_Handle* feature = nullptr;
     NVSDK_NGX_Parameter* parameters = nullptr;
-};
-
-// One image this pass owns: the storage, the view, and the NGX wrapper that describes it. Kept
-// together because they are created, resized and destroyed as one thing.
-struct OwnedImage
-{
-    VkImage image = VK_NULL_HANDLE;
-    VkDeviceMemory memory = VK_NULL_HANDLE;
-    VkImageView view = VK_NULL_HANDLE;
-    NVSDK_NGX_Resource_VK ngx {};
-    VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
-    uint32_t width = 0;
-    uint32_t height = 0;
-    VkFormat format = VK_FORMAT_UNDEFINED;
-
-    bool Valid() const { return image != VK_NULL_HANDLE && view != VK_NULL_HANDLE; }
 };
 
 struct VkState
@@ -52,24 +37,24 @@ struct VkState
     bool creationPending = false;
 
     // What the model writes, the proxy it is shown, and the frame as the upscaler left it.
-    OwnedImage output;
-    OwnedImage scratch;
-    OwnedImage passClamp;
-    OwnedImage proxy;
-    OwnedImage keep;
+    ImageVk output;
+    ImageVk scratch;
+    ImageVk passClamp;
+    ImageVk proxy;
+    ImageVk keep;
     bool beforeSr = false;
     bool rayReconstruction = false;
 
     // The proxy at the model's working size, when that is below the frame. The model -- 98% of the
     // cost -- then runs on this instead of the full proxy, which is the whole point of the working
     // scale slider. Unused (and never created) at scale 1, so the default path is unchanged.
-    OwnedImage proxySmall;
+    ImageVk proxySmall;
 
     // Supersampling (working scale > 1): the model runs above native, superUp enlarges the proxy to
     // that size and superDown averages the answer (output) back into outputNative at native for a 1:1
     // composite. nrScaler is the filter both were built with, so a changed DlssNrScalingDownscaler
     // rebuilds them. Unused and never created at scale <= 1.
-    OwnedImage outputNative;
+    ImageVk outputNative;
     std::unique_ptr<OS_Vk> superUp;
     std::unique_ptr<OS_Vk> superDown;
     Scaler nrScaler = Scaler::Count;
@@ -106,7 +91,7 @@ struct VkState
     // buffers it is copied into. Only texel (0,0) is ever read -- the rest of the grid belongs to the
     // frame-statistics meter that was removed from the shared shader, and 8x8 is here only so that a
     // single 8x8 thread group lands entirely inside the image.
-    OwnedImage meter;
+    ImageVk meter;
     VkBuffer meterReadback[4] = {};
     VkDeviceMemory meterReadbackMemory[4] = {};
     void* meterMapped[4] = {};
@@ -144,13 +129,10 @@ struct ModelVk::Impl
     }
 
     void Fail(const char* why);
-    void DestroyImage(OwnedImage& img);
-    uint32_t FindMemoryTypeIndex(uint32_t typeBits, VkMemoryPropertyFlags properties);
-    static VkImageInfo ImageInfoOf(const OwnedImage& img);
-    bool CreateImage(OwnedImage& img, uint32_t width, uint32_t height, VkFormat format, bool readWrite);
+    bool CreateImage(ImageVk& img, uint32_t width, uint32_t height, VkFormat format);
     bool CreateMeterReadback();
     void DestroyMeterReadback();
-    void Transition(VkCommandBuffer cmd, OwnedImage& img, VkImageLayout to);
+    void Transition(VkCommandBuffer cmd, ImageVk& img, VkImageLayout to);
     void TransitionForeign(VkCommandBuffer cmd, VkImage image, VkImageSubresourceRange range, VkImageLayout from,
                            VkImageLayout to);
     bool InitDriver(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device);

@@ -278,8 +278,8 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
 
     // Read the caller's actual input layout; the resolve restores it after writing.
     if (!state.pass->Dispatch(cmdBuffer, encode, width, height, colour->Resource.ImageViewInfo.ImageView,
-                              VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, state.proxy.view, state.keep.view,
-                              inputLayout))
+                              VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, state.proxy.info.ImageView,
+                              state.keep.info.ImageView, inputLayout))
     {
         Fail("the encode dispatch failed");
         return false;
@@ -288,7 +288,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     // The model's input: the full proxy, or a downsampled copy of it when the working scale is below
     // the frame. Mirrors the D3D12 path -- the encode always writes a full proxy, and a separate
     // downsample makes the small one the model actually reads.
-    OwnedImage* modelInput = &state.proxy;
+    ImageVk* modelInput = &state.proxy;
 
     if (reduced && state.proxySmall.Valid())
     {
@@ -322,8 +322,8 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
             Transition(cmdBuffer, state.proxy, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             Transition(cmdBuffer, state.proxySmall, VK_IMAGE_LAYOUT_GENERAL);
 
-            VkImageInfo upin = ImageInfoOf(state.proxy);
-            VkImageInfo upout = ImageInfoOf(state.proxySmall);
+            VkImageInfo upin = state.proxy.info;
+            VkImageInfo upout = state.proxySmall.info;
 
             if (state.superUp && state.superUp->IsInit() && state.superUp->DispatchResources(cmdBuffer, upin, upout))
                 built = true;
@@ -348,8 +348,8 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
             Transition(cmdBuffer, state.proxy, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             Transition(cmdBuffer, state.proxySmall, VK_IMAGE_LAYOUT_GENERAL);
 
-            if (!state.pass->Dispatch(cmdBuffer, down, workWidth, workHeight, state.proxy.view, VK_NULL_HANDLE,
-                                      VK_NULL_HANDLE, VK_NULL_HANDLE, state.proxySmall.view, VK_NULL_HANDLE,
+            if (!state.pass->Dispatch(cmdBuffer, down, workWidth, workHeight, state.proxy.info.ImageView, VK_NULL_HANDLE,
+                                      VK_NULL_HANDLE, VK_NULL_HANDLE, state.proxySmall.info.ImageView, VK_NULL_HANDLE,
                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
             {
                 Fail("the downsample dispatch failed");
@@ -381,7 +381,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
             Transition(cmdBuffer, state.meter, VK_IMAGE_LAYOUT_GENERAL);
 
             if (state.pass->Dispatch(cmdBuffer, meter, kMeterSide, kMeterSide, VK_NULL_HANDLE, VK_NULL_HANDLE,
-                                     VK_NULL_HANDLE, exposure->Resource.ImageViewInfo.ImageView, state.meter.view,
+                                     VK_NULL_HANDLE, exposure->Resource.ImageViewInfo.ImageView, state.meter.info.ImageView,
                                      VK_NULL_HANDLE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
             {
@@ -395,7 +395,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
                 region.imageOffset = { 0, 0, 0 };
                 region.imageExtent = { kMeterSide, kMeterSide, 1 };
 
-                vkCmdCopyImageToBuffer(cmdBuffer, state.meter.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                vkCmdCopyImageToBuffer(cmdBuffer, state.meter.info.Image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                        state.meterReadback[slot], 1, &region);
 
                 // The copy has to be visible to a host read, and only the host will read it.
@@ -425,8 +425,8 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     // Match D3D12: preserve the game's vector encoding, then adjust only for the NR working scale.
     mvX *= (float) workWidth / width;
     mvY *= (float) workHeight / height;
-    OwnedImage* answer = &state.output;
-    OwnedImage* input = modelInput;
+    ImageVk* answer = &state.output;
+    ImageVk* input = modelInput;
     bool clampFailed = false;
     uint32_t clampSlots[2] = { UINT32_MAX, UINT32_MAX };
     NVSDK_NGX_Result evaluated = NVSDK_NGX_Result_Success;
@@ -434,7 +434,9 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     {
         Transition(cmdBuffer, *input, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         Transition(cmdBuffer, *answer, VK_IMAGE_LAYOUT_GENERAL);
-        evaluated = EvaluateModel(cmdBuffer, pass, &input->ngx, depth, motion, &answer->ngx,
+        auto inputResource = wrap(input->info, true);
+        auto answerResource = wrap(answer->info, true);
+        evaluated = EvaluateModel(cmdBuffer, pass, &inputResource, depth, motion, &answerResource,
                                   workWidth, workHeight, guides, depthInverted, mvX, mvY, cfg);
         if (evaluated != NVSDK_NGX_Result_Success)
             break;
@@ -446,8 +448,8 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
             clamp.Mode = DlssNrMode_ClampProxy;
             clamp.Width = workWidth;
             clamp.Height = workHeight;
-            if (!state.pass->Dispatch(cmdBuffer, clamp, workWidth, workHeight, answer->view, VK_NULL_HANDLE,
-                                      VK_NULL_HANDLE, VK_NULL_HANDLE, state.passClamp.view, VK_NULL_HANDLE,
+            if (!state.pass->Dispatch(cmdBuffer, clamp, workWidth, workHeight, answer->info.ImageView, VK_NULL_HANDLE,
+                                      VK_NULL_HANDLE, VK_NULL_HANDLE, state.passClamp.info.ImageView, VK_NULL_HANDLE,
                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, false, &clampSlots[pass % 2]))
             {
@@ -477,16 +479,16 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     resolve.Mode = DlssNrMode_Resolve;
 
     // Downsample the model answer to native before composition.
-    OwnedImage* resolveProxy = modelInput;
-    OwnedImage* resolveAnswer = answer;
+    ImageVk* resolveProxy = modelInput;
+    ImageVk* resolveAnswer = answer;
 
     if (workScale > 1.0f && state.superDown && state.superDown->IsInit() && state.outputNative.Valid())
     {
         Transition(cmdBuffer, *answer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         Transition(cmdBuffer, state.outputNative, VK_IMAGE_LAYOUT_GENERAL);
 
-        VkImageInfo dsin = ImageInfoOf(*answer);
-        VkImageInfo dsout = ImageInfoOf(state.outputNative);
+        VkImageInfo dsin = answer->info;
+        VkImageInfo dsout = state.outputNative.info;
 
         if (state.superDown->DispatchResources(cmdBuffer, dsin, dsout))
         {
@@ -499,8 +501,8 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     Transition(cmdBuffer, *resolveAnswer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     Transition(cmdBuffer, state.keep, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-    if (!state.pass->Dispatch(cmdBuffer, resolve, width, height, resolveProxy->view, resolveAnswer->view,
-                              state.keep.view, VK_NULL_HANDLE, target.ImageView, VK_NULL_HANDLE,
+    if (!state.pass->Dispatch(cmdBuffer, resolve, width, height, resolveProxy->info.ImageView,
+                              resolveAnswer->info.ImageView, state.keep.info.ImageView, VK_NULL_HANDLE, target.ImageView, VK_NULL_HANDLE,
                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
     {
         Fail("the resolve dispatch failed");

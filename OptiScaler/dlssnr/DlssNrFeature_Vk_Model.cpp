@@ -179,14 +179,14 @@ void ModelVk::Impl::Shutdown()
     state.creationReady = VK_NULL_HANDLE;
     state.creationPending = false;
 
-    DestroyImage(state.output);
-    DestroyImage(state.scratch);
-    DestroyImage(state.passClamp);
-    DestroyImage(state.proxy);
-    DestroyImage(state.proxySmall);
-    DestroyImage(state.outputNative);
-    DestroyImage(state.keep);
-    DestroyImage(state.meter);
+    state.output.Destroy(state.device);
+    state.scratch.Destroy(state.device);
+    state.passClamp.Destroy(state.device);
+    state.proxy.Destroy(state.device);
+    state.proxySmall.Destroy(state.device);
+    state.outputNative.Destroy(state.device);
+    state.keep.Destroy(state.device);
+    state.meter.Destroy(state.device);
     DestroyMeterReadback();
 
     state.superUp.reset();
@@ -282,33 +282,33 @@ bool ModelVk::Impl::PrepareModels(VkCommandBuffer cmdBuffer, const DlssNrFrameIn
         }
 
         ReleaseModels();
-        DestroyImage(state.scratch);
-        DestroyImage(state.passClamp);
+        state.scratch.Destroy(state.device);
+        state.passClamp.Destroy(state.device);
 
         const VkFormat working = VK_FORMAT_R16G16B16A16_SFLOAT;
 
         // The meter is a fixed 8x8 whatever the frame is, so it is only built the once -- but it is
         // built alongside the rest so that a failure here is caught by the same check.
         const bool meterReady =
-            (state.meter.Valid() || CreateImage(state.meter, kMeterSide, kMeterSide, VK_FORMAT_R32_SFLOAT, true)) &&
+            (state.meter.Valid() || CreateImage(state.meter, kMeterSide, kMeterSide, VK_FORMAT_R32_SFLOAT)) &&
             CreateMeterReadback();
 
         if (!meterReady)
             LOG_WARN("DLSS-NR Vulkan: no exposure meter; the white point stays on the slider");
 
-        DestroyImage(state.proxySmall);
-        DestroyImage(state.outputNative);
+        state.proxySmall.Destroy(state.device);
+        state.outputNative.Destroy(state.device);
 
         // output is the model's target, so it is the working size. proxy and keep are full: proxy is
         // the source the downsample reads, keep is the untouched frame the resolve composites onto.
         // outputNative is the native buffer the supersample down-leg averages the answer into.
-        const bool ok = CreateImage(state.output, workWidth, workHeight, working, true) &&
-                        (passes == 1 || (CreateImage(state.scratch, workWidth, workHeight, working, true) &&
-                                         CreateImage(state.passClamp, workWidth, workHeight, working, true))) &&
-                        CreateImage(state.proxy, width, height, working, true) &&
-                        CreateImage(state.keep, width, height, working, true) &&
-                        (!reduced || CreateImage(state.proxySmall, workWidth, workHeight, working, true)) &&
-                        (workScale <= 1.0f || CreateImage(state.outputNative, width, height, working, true));
+        const bool ok = CreateImage(state.output, workWidth, workHeight, working) &&
+                        (passes == 1 || (CreateImage(state.scratch, workWidth, workHeight, working) &&
+                                         CreateImage(state.passClamp, workWidth, workHeight, working))) &&
+                        CreateImage(state.proxy, width, height, working) &&
+                        CreateImage(state.keep, width, height, working) &&
+                        (!reduced || CreateImage(state.proxySmall, workWidth, workHeight, working)) &&
+                        (workScale <= 1.0f || CreateImage(state.outputNative, width, height, working));
 
         if (!ok)
         {

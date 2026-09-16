@@ -71,9 +71,10 @@ void RenderInput(Config* config)
 
     {
         {
-            const auto ex = DlssNr::GameExposureStatus();
-            const bool vk = DlssNr::IsRunningVk();
-            const bool haveExposure = vk ? DlssNr::ExposureOfferedVk() : ex.everOffered;
+            const auto vulkan = ReadStatus(Backend::Vulkan);
+            const bool vk = vulkan.running;
+            const auto ex = vk ? vulkan.exposure : ReadStatus(Backend::Dx12).exposure;
+            const bool haveExposure = vk ? ex.offeredNow : ex.everOffered;
 
             const float anchorNow = DlssNr::ExposureScan::BestValue();
             const bool haveAnchor = !DlssNr::ExposureScan::Anchors().empty();

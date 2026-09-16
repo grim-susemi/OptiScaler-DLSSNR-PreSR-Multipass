@@ -46,22 +46,24 @@ void RenderStatus(Config* config)
 {
     const bool enabled = config->DlssNrEnabled.value_or_default();
     const bool finishedPicture = config->DlssNrFinishedPicture.value_or_default();
-    const bool vulkan = DlssNr::IsRunningVk();
+    const auto dx12 = ReadStatus(Backend::Dx12);
+    const auto vk = ReadStatus(Backend::Vulkan);
+    const bool vulkan = vk.running;
 
     // An existing model handle does not mean NR is enabled this frame.
     if (!enabled)
     {
         ImGui::TextDisabled("NR off.");
     }
-    else if (!DlssNr::IsRunning() && !vulkan)
+    else if (!dx12.running && !vulkan)
     {
         const auto feature = State::Instance().currentFeature;
         const bool nativeVk = feature && feature->Api() == API::Vulkan && !feature->IsWithDx12();
-        const char* reason = nativeVk ? DlssNr::FailureReasonVk() : DlssNr::FailureReason();
+        const auto& reason = nativeVk ? vk.failureReason : dx12.failureReason;
 
-        if (reason[0] != 0)
+        if (!reason.empty())
         {
-            ImGui::TextWrapped("%s", reason);
+            ImGui::TextWrapped("%s", reason.c_str());
             ImGui::SameLine();
 
             if (nativeVk)
@@ -84,7 +86,7 @@ void RenderStatus(Config* config)
     }
     else
     {
-        const auto ms = vulkan ? DlssNr::LastGpuTimeVk() : DlssNr::LastGpuTime();
+        const auto ms = vulkan ? vk.gpuTime : dx12.gpuTime;
 
         // Hiding the edit keeps model evaluation running.
         const char* runSuffix = !config->DlssNrApplyModel.value_or_default() ? "  (model running, edit hidden)" : "";
@@ -97,7 +99,7 @@ void RenderStatus(Config* config)
             ImGui::Text("Running%s - %.2f ms elapsed%s", vulkan ? " natively on Vulkan" : "", ms.value(), runSuffix);
         else if (vulkan)
             // Measured but not yet read: the first few frames are still in the query ring.
-            ImGui::Text("Running natively on Vulkan - %llu frames%s", DlssNr::FramesVk(), runSuffix);
+            ImGui::Text("Running natively on Vulkan - %llu frames%s", vk.frames, runSuffix);
         else
             ImGui::Text("Running.%s", runSuffix);
         ImGui::PopStyleColor();

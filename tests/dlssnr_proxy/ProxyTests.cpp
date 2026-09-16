@@ -247,9 +247,9 @@ int main()
     DlssNr::PublishStatus(&color, DlssNr::Backend::Dx12, status);
     DlssNr::PublishStatus(&output, DlssNr::Backend::Dx12, status);
     DlssNr::ClearStatus(&color);
-    assert(DlssNr::IsRunning());
+    assert(DlssNr::ReadStatus(DlssNr::Backend::Dx12).running);
     DlssNr::ClearStatus(&output);
-    assert(!DlssNr::IsRunning());
+    assert(!DlssNr::ReadStatus(DlssNr::Backend::Dx12).running);
     const auto requestsBefore = DlssNr::ReadControlRequests();
     DlssNr::RetryAfterFailure();
     DlssNr::RequestCapture(8);

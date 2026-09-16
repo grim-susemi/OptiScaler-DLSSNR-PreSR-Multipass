@@ -31,7 +31,6 @@ struct StatusSnapshot
     std::optional<double> gpuTime;
     unsigned long long frames = 0;
     ExposureStatus exposure;
-    bool captureInProgress = false;
 };
 
 struct ControlRequests
@@ -43,20 +42,11 @@ struct ControlRequests
 
 void PublishStatus(const void* owner, Backend backend, const StatusSnapshot& status);
 void ClearStatus(const void* owner);
+StatusSnapshot ReadStatus(Backend backend);
 ControlRequests ReadControlRequests();
 
 void RenderMenu(::Config* config, float menuResScale);
 void RetryAfterFailure();
-bool IsRunning();
-const char* FailureReason();
-ExposureStatus GameExposureStatus();
 std::optional<double> LastGpuTime();
 void RequestCapture(unsigned int frames);
-bool CaptureInProgress();
-
-bool IsRunningVk();
-const char* FailureReasonVk();
-unsigned long long FramesVk();
-std::optional<double> LastGpuTimeVk();
-bool ExposureOfferedVk();
 } // namespace DlssNr

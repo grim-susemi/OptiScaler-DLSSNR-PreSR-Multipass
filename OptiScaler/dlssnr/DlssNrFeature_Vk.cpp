@@ -77,7 +77,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
             exposure.preExposure = state.gamePreExposure;
             PublishStatus(owner, Backend::Vulkan,
                           { state.models[0].feature != nullptr && !state.failed, state.reason, state.lastGpuTime,
-                            state.frames, exposure, false });
+                            state.frames, exposure });
         }
     } report { this };
     const auto requests = ReadControlRequests();

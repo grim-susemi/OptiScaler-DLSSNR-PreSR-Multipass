@@ -74,7 +74,7 @@ ID3D12Resource* DlssNr_Dx12::State::EnlargeMatchedResidual(ID3D12GraphicsCommand
         lifetime.Record(cmd);
         g.lifetime.Record(cmd);
         DlssNrConstants unit {}; unit.Mode = DlssNrMode_UnitExposure; unit.Width = unit.Height = 1;
-        if (!shader.DispatchPass(cmd, unit, proxy, nullptr, nullptr, nullptr, nullptr, g.exposure.Get(), nullptr))
+        if (!shader.DispatchPass(cmd, unit, proxy, nullptr, nullptr, nullptr, g.exposure.Get(), nullptr))
             return say("DLSS enlargement exposure initialization failed; use Retry.");
         Barrier(cmd, g.exposure.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         g.dlss = std::make_unique<DlssNr::PrivateUpscalerDx12>(DlssNr::PrivateUpscaler::DLSS);
@@ -102,7 +102,7 @@ ID3D12Resource* DlssNr_Dx12::State::EnlargeMatchedResidual(ID3D12GraphicsCommand
     g.lifetime.Record(cmd);
     DlssNrConstants encode {}; encode.Mode = DlssNrMode_EncodeProxyResidual;
     encode.Width = w; encode.Height = h; encode.Passthrough = resolve.Passthrough;
-    bool ok = shader.DispatchPass(cmd, encode, proxy, answer, nullptr, nullptr, nullptr, g.input.Get(), nullptr);
+    bool ok = shader.DispatchPass(cmd, encode, proxy, answer, nullptr, nullptr, g.input.Get(), nullptr);
     DlssNrConstants guides {}; guides.Mode = DlssNrMode_ResizePrivateGuides;
     guides.Width = w; guides.Height = h;
     guides.GuideWidth = regions.depth.width; guides.GuideHeight = regions.depth.height;
@@ -114,7 +114,7 @@ ID3D12Resource* DlssNr_Dx12::State::EnlargeMatchedResidual(ID3D12GraphicsCommand
     guides.MvScaleX = frame.MvScaleX * float(w) / std::max(referenceW ? referenceW : regions.motion.width, 1u);
     guides.MvScaleY = frame.MvScaleY * float(h) / std::max(referenceH ? referenceH : regions.motion.height, 1u);
     if (Config::Instance()->DlssNrHoldFrame.value_or_default()) guides.MvScaleX = guides.MvScaleY = 0;
-    ok &= shader.DispatchPass(cmd, guides, depth, motion, nullptr, nullptr, nullptr, g.depth.Get(), g.motion.Get());
+    ok &= shader.DispatchPass(cmd, guides, depth, motion, nullptr, nullptr, g.depth.Get(), g.motion.Get());
     if (!ok) { g.reset = true; return say("DLSS enlargement guide/carrier preparation failed."); }
     for (auto* r : { g.input.Get(), g.depth.Get(), g.motion.Get() })
         Barrier(cmd, r, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);

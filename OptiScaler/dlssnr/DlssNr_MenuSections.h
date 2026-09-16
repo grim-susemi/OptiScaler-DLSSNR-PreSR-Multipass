@@ -23,8 +23,6 @@ inline void HelpMarker(const char* tip)
 }
 
 
-void RenderPlacement(Config* config);
-void RenderStatus(Config* config);
 void RenderInput(Config* config);
 void RenderModel(Config* config);
 void RenderBlend(Config* config);

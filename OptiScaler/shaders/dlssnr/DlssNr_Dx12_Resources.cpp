@@ -9,28 +9,6 @@ auto DlssNr_Dx12::State::ParkNrResource(ID3D12Resource*& resource) -> void
     lifetime.Retire([retired] { retired->Release(); });
 }
 
-auto DlssNr_Dx12::State::ReleaseSurfacesIfFormatChanged(DXGI_FORMAT needed) -> void
-{
-    if (nr.output == nullptr || nr.output->GetDesc().Format == needed)
-        return;
-
-    LOG_INFO("DLSS-NR rebuilding surfaces: format {} -> {} (inject point changed)",
-             (int) nr.output->GetDesc().Format, (int) needed);
-
-    for (auto& model : nr.models)
-        model.RetryAfterFailure();
-    std::fill(std::begin(nr.passCreateFailed), std::end(nr.passCreateFailed), false);
-    modelRunning = false;
-
-    for (ID3D12Resource** r : { &nr.output, &nr.passScratch, &nr.passClamp, &nr.colorCopy, &nr.hdrCopy, &nr.colorSmall,
-                                &nr.outputNative, &nr.activeColor })
-        ParkNrResource(*r);
-
-    nr.passScratchFailed = false;
-
-    nr.reset = true;
-}
-
 auto DlssNr_Dx12::State::CreateScratch(ID3D12Device* device, DXGI_FORMAT format, unsigned int width, unsigned int height) -> ID3D12Resource*
 {
     D3D12_HEAP_PROPERTIES heap {};
@@ -93,9 +71,6 @@ auto DlssNr_Dx12::State::TypedGuideFormat(DXGI_FORMAT f) -> DXGI_FORMAT
     }
 }
 
-auto DlssNr_Dx12::State::IsTypeless(DXGI_FORMAT f) -> bool
-{ return TypedGuideFormat(f) != f; }
-
 auto DlssNr_Dx12::State::CreateGuideClone(ID3D12Device* device, ID3D12Resource* source) -> ID3D12Resource*
 {
     D3D12_RESOURCE_DESC desc = source->GetDesc();
@@ -114,7 +89,7 @@ auto DlssNr_Dx12::State::CreateGuideClone(ID3D12Device* device, ID3D12Resource* 
 auto DlssNr_Dx12::State::ReadableGuide(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList, ID3D12Resource* source,
                                   ID3D12Resource** clone) -> ID3D12Resource*
 {
-    if (source == nullptr || !IsTypeless(source->GetDesc().Format))
+    if (source == nullptr || TypedGuideFormat(source->GetDesc().Format) == source->GetDesc().Format)
         return source;
 
     // A dynamic-resolution game reallocates its depth and motion vectors as the render size moves, so

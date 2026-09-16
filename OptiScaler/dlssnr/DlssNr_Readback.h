@@ -5,6 +5,8 @@
 #include <fstream>
 #include <cstdint>
 #include <utility>
+#include <algorithm>
+#include <cstring>
 
 namespace DlssNr
 {
@@ -22,6 +24,47 @@ inline bool CreateReadbackBuffer(ID3D12Device* device, UINT64 bytes, ID3D12Resou
     return SUCCEEDED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
         D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(result)));
 }
+
+// Mark executed capture copies. GPU lifetime/fence retirement must be established before reading.
+struct CaptureTimestamps
+{
+    Microsoft::WRL::ComPtr<ID3D12QueryHeap> query;
+    Microsoft::WRL::ComPtr<ID3D12Resource> readback;
+
+    bool Init(ID3D12Device* device, unsigned count)
+    {
+        D3D12_QUERY_HEAP_DESC desc { D3D12_QUERY_HEAP_TYPE_TIMESTAMP, count, 0 };
+        if (FAILED(device->CreateQueryHeap(&desc, IID_PPV_ARGS(&query))) ||
+            !CreateReadbackBuffer(device, count * sizeof(UINT64), &readback))
+            return false;
+        void* data = nullptr;
+        D3D12_RANGE empty {}, written { 0, count * sizeof(UINT64) };
+        if (FAILED(readback->Map(0, &empty, &data)))
+            return false;
+        std::memset(data, 0, written.End);
+        readback->Unmap(0, &written);
+        return true;
+    }
+    void Record(ID3D12GraphicsCommandList* commands, unsigned index)
+    {
+        commands->EndQuery(query.Get(), D3D12_QUERY_TYPE_TIMESTAMP, index);
+        commands->ResolveQueryData(query.Get(), D3D12_QUERY_TYPE_TIMESTAMP, index, 1,
+                                   readback.Get(), index * sizeof(UINT64));
+    }
+    // Return the last timestamp only when every requested copy executed. Zero marks a discarded recording.
+    UINT64 Completed(unsigned count) const
+    {
+        void* data = nullptr;
+        D3D12_RANGE range { 0, count * sizeof(UINT64) }, empty {};
+        if (FAILED(readback->Map(0, &range, &data)))
+            return 0;
+        const auto* values = static_cast<const UINT64*>(data);
+        const UINT64 last = std::all_of(values, values + count, [](UINT64 value) { return value != 0; })
+                                ? values[count - 1] : 0;
+        readback->Unmap(0, &empty);
+        return last;
+    }
+};
 
 inline DXGI_FORMAT TypedReadbackFormat(DXGI_FORMAT format)
 {

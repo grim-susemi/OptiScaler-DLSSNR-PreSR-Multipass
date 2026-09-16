@@ -24,7 +24,7 @@ cbuffer Params : register(b0)
     float gCompareZoom;  // side by side: 1 fits the frame, 2 fills the half
     uint  gCompareSwap;  // put the edited frame on the other side
     uint  gTransfer;     // 0 classic, 1 matched residual -- how a below-size model comes back
-    float gDebugScale;   // what the debug views are scaled by, held still while the meter moves
+    float gDebugScale;   // debug view scale in the frame's units
     uint  gReversibleMode; // 0 knee, 1 Neutwo+composed, 2 Neutwo+replace, 3 hybrid+composed, 4 hybrid+replace
     uint  gApplyModel;     // 0 output the clean frame (pass still runs), 1 apply the model's edit
     uint  gReserved;
@@ -240,22 +240,6 @@ float3 SrgbToLinear(float3 v)
     v = saturate(v);
     return lerp(v / 12.92, pow((v + 0.055) / 1.055, 2.4), step(0.04045, v));
 }
-
-// The edit at an arbitrary position, exactly as the resolve computes its own.
-float3 EditAt(float2 uvq)
-{
-    float3 p = gSource.SampleLevel(gLinear, uvq, 0).rgb;
-    float3 m = gModel.SampleLevel(gLinear, uvq, 0).rgb;
-
-    if (gPassthrough == 0)
-    {
-        p = SrgbToLinear(p);
-        m = SrgbToLinear(m);
-    }
-
-    return m - p;
-}
-
 
 // Soft-knee proxy shared by encoding and matched-residual reconstruction.
 float3 SoftKnee(float3 display)

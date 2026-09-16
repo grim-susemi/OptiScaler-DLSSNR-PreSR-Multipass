@@ -1,6 +1,6 @@
 #pragma once
 
-// Call under g_nrMutex. This is a render-seam identity, never evidence of GPU submission.
+// Call under the NR owner's mutex. This is a render-seam identity, never evidence of GPU submission.
 class DlssNrSeamClock
 {
     unsigned long long lastRaw = ~0ull;

@@ -69,7 +69,6 @@ Reference: official master `5ee53e38`. Each group states why its changed files a
 - `OptiScaler/dlssnr/DlssNrFeature_Vk.h`
 - `OptiScaler/dlssnr/DlssNrFeature_Vk_Internal.h`
 - `OptiScaler/dlssnr/DlssNrFeature_Vk_Model.cpp`
-- `OptiScaler/dlssnr/DlssNrFeature_Vk_Resources.cpp`
 - `OptiScaler/dlssnr/DlssNrFinished_Vk.cpp`
 - `OptiScaler/dlssnr/DlssNrFinished_Vk.h`
 - `OptiScaler/dlssnr/DlssNrPipeline_Vk.h`
@@ -80,12 +79,9 @@ Reference: official master `5ee53e38`. Each group states why its changed files a
 - `OptiScaler/dlssnr/DlssNr_GpuLifetime.h`
 - `OptiScaler/dlssnr/DlssNr_HoldParameters_Dx12.h`
 - `OptiScaler/dlssnr/DlssNr_Menu.cpp`
-- `OptiScaler/dlssnr/DlssNr_MenuBlend.cpp`
-- `OptiScaler/dlssnr/DlssNr_MenuInput.cpp`
-- `OptiScaler/dlssnr/DlssNr_MenuModel.cpp`
+- `OptiScaler/dlssnr/DlssNr_MenuControls.cpp`
 - `OptiScaler/dlssnr/DlssNr_MenuOverlay.cpp`
 - `OptiScaler/dlssnr/DlssNr_MenuOverlay.h`
-- `OptiScaler/dlssnr/DlssNr_MenuPlacement.cpp`
 - `OptiScaler/dlssnr/DlssNr_MenuSections.h`
 - `OptiScaler/dlssnr/DlssNr_PipelineCapture.h`
 - `OptiScaler/dlssnr/DlssNr_PipelineUi.h`
@@ -169,7 +165,6 @@ Reference: official master `5ee53e38`. Each group states why its changed files a
 - `OptiScaler/shaders/dlssnr/DlssNr_Dx12_DeferredSr.cpp`
 - `OptiScaler/shaders/dlssnr/DlssNr_Dx12_Encode.cpp`
 - `OptiScaler/shaders/dlssnr/DlssNr_Dx12_Enlarge.cpp`
-- `OptiScaler/shaders/dlssnr/DlssNr_Dx12_Evaluate.cpp`
 - `OptiScaler/shaders/dlssnr/DlssNr_Dx12_FinishedCompose.cpp`
 - `OptiScaler/shaders/dlssnr/DlssNr_Dx12_FinishedQueue.cpp`
 - `OptiScaler/shaders/dlssnr/DlssNr_Dx12_Hold.cpp`
@@ -182,7 +177,6 @@ Reference: official master `5ee53e38`. Each group states why its changed files a
 - `OptiScaler/shaders/dlssnr/DlssNr_Dx12_Status.cpp`
 - `OptiScaler/shaders/dlssnr/DlssNr_GpuTime.h`
 - `OptiScaler/shaders/dlssnr/DlssNr_Guides.h`
-- `OptiScaler/shaders/dlssnr/DlssNr_ResidualPair.h`
 - `OptiScaler/shaders/dlssnr/DlssNr_SeamClock.h`
 - `OptiScaler/shaders/dlssnr/DlssNr_Upscaler_Dx12.cpp`
 - `OptiScaler/shaders/dlssnr/DlssNr_Upscaler_Dx12.h`

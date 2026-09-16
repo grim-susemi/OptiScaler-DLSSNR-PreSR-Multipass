@@ -253,45 +253,37 @@ class Config
     CustomOptional<int32_t> NetworkModel { 0 };
     CustomOptional<bool> CreateHeaps { true };
 
-    // --- DLSS 5 Neural Rendering (OptiScaler/dlssnr) --- removable as one block -----------------
-    // DLSS Neural Rendering: a detail-synthesis pass over the upscaler's output. Off by default -- it is
-    // an undocumented feature driven directly through its snippet, not something NVIDIA exposes.
+    // DLSS Neural Rendering
+    // NR is opt-in. Placement defaults to the upscaler output.
     CustomOptional<bool> DlssNrEnabled { false };
-    // Run the NR pass on the upscaler's colour input, at render resolution, immediately before SR.
-    // Off preserves the v0.2.0 post-upscale placement.
     CustomOptional<bool> DlssNrRunBeforeSr { false };
     CustomOptional<bool> DlssNrFinishedPicture { false };
-    // Fit the scene-to-finished HDR luminance response for early-generated residuals. Opt-in.
+    // Fit the scene-to-finished HDR response for early residuals.
     CustomOptional<bool> DlssNrHdrTransfer { false };
-    // Generate NR before SR, upscale its signed contribution with a private SR feature,
-    // and apply it after the game's upscaler. Takes precedence over RunBeforeSR; opt-in.
+    // Generate before SR, privately upscale the edit, then compose after SR.
     CustomOptional<bool> DlssNrDeferredDlss { false };
-    // Private carrier only: 0 DLSS (legacy default), 1 FSR 2.2, 2 FidelityFX runtime, 3 XeSS.
+    // Private carrier: 0 DLSS, 1 FSR 2.2, 2 FidelityFX runtime, 3 XeSS.
     CustomOptional<int> DlssNrPrivateUpscaler { 0 };
-    // Legacy INI alias: with RunBeforeSR, enables the same private SR edit path as DeferredDLSS.
+    // Legacy alias for the deferred path when RunBeforeSR is enabled.
     CustomOptional<bool> DlssNrResidualAcrossRr { false };
-    // RR residual history blend before private upscaling; v0.7.7 default, clamped to 0.01..1.
+    // RR history blend before private upscaling, clamped to 0.01..1.
     CustomOptional<float> DlssNrResidualAcrossRrBlend { 0.08f };
-    // Toggles the pass in game. Unbound by default -- a key that does something unexpected is worse
-    // than one that does nothing.
     CustomOptional<int> DlssNrToggleKey { UnboundKey };
     CustomOptional<uint32_t> DlssNrPreset { 0 };
     CustomOptional<float> DlssNrIntensity { 1.0f };
-    // 0 default (standard), 1 natural, 2 cinematic -- the model's own processing profiles.
+    // 0 Standard, 1 Natural, 2 Cinematic.
     CustomOptional<uint32_t> DlssNrStyle { 0 };
-    // Optional per-pass model profiles. Pass 1 uses Preset/Style above; an absent override inherits
-    // pass 1. Keeping inheritance explicit preserves every existing configuration and lets changing
-    // the base profile update the whole stack unless a later pass was deliberately specialised.
+    // Absent overrides inherit pass 1; later-pass LocalTone defaults to zero.
     CustomOptional<uint32_t, NoDefault> DlssNrPass2Preset;
     CustomOptional<uint32_t, NoDefault> DlssNrPass2Style;
     CustomOptional<uint32_t, NoDefault> DlssNrPass3Preset;
     CustomOptional<uint32_t, NoDefault> DlssNrPass3Style;
     CustomOptional<float> DlssNrLocalStructure { 1.0f };
     CustomOptional<float> DlssNrLocalTone { 1.0f };
-    // -1 means follow local structure, which is the model's own default. It is not a strength of zero.
+    // -1 follows the model's LocalStructure setting.
     CustomOptional<float> DlssNrSkinStructure { -1.0f };
     CustomOptional<bool> DlssNrAutoMask { true };
-    // Optional final-composition filter, not NVIDIA's semantic auto mask.
+    // Optional final-composition filter, independent of the model's semantic mask.
     CustomOptional<bool> DlssNrSkinProtection { false };
     CustomOptional<float> DlssNrSkinDetail { 1.0f };
     CustomOptional<float> DlssNrSkinColour { 1.0f };
@@ -317,105 +309,51 @@ class Config
     };
     NrExtraPass DlssNrExtraPasses[27]; // pass 4..30; legacy pass 2/3 keys stay compatible
 
-    // How much of the model's edit reaches the frame. Separated because detail synthesis is a luminance
-    // edit and any colour shift is usually the part you do not want, and allowed past 1.0 because
-    // exaggerating an edit is the only honest way to see whether there is one.
+    // Composition strengths are separate from model creation settings.
     CustomOptional<float> DlssNrTransferStrength { 1.0f };
     CustomOptional<float> DlssNrColourStrength { 1.0f };
 
-    // The RenoDX reversible proxy mode. 0 = today's soft-knee encode + our composition (default,
-    // byte-identical); 1 = unclipped Neutwo proxy + our composition; 2 = Neutwo proxy + pure-inverse
-    // replace. An in-game A/B and a way back. Default 0 = byte-identical to before.
+    // 0 soft knee; 1/2 Neutwo compose/replace; 3/4 hybrid compose/replace.
     CustomOptional<uint32_t> DlssNrReversibleMode { 0 };
 
-    // Whether the model's edit is applied. Off keeps the pass running (so Hold frame works) but shows
-    // the clean upscaler frame -- for A/B'ing NR on/off on a frozen frame. Default true.
+    // Hide the edit while leaving NR running for held-frame comparisons.
     CustomOptional<bool> DlssNrApplyModel { true };
 
-    // Frame hold: freeze the NR pass's input so a live setting change re-renders the SAME frame -- the
-    // only clean way to A/B our settings. A live testing toggle, not really a saved preference; off by
-    // default. See dlssnr/design/frame-hold.md.
+    // Freeze NR input for tuning. See dlssnr/design/frame-hold.md.
     CustomOptional<bool> DlssNrHoldFrame { false };
 
-
-    // The most the pass may multiply or divide a pixel by. A detail pass has no business restyling a
-    // light source, whatever the model returns.
+    // Maximum pixel brightening/darkening ratio.
     CustomOptional<float> DlssNrMaxRatio { 2.0f };
 
-    // Below 100%: 0 classic, 1 spatial matched residual, 2 private DLSS SR matched residual.
-    // Mode 2 requires post-upscale processing through DX12 (including finished-picture NR).
+    // Reduced-resolution output: 0 classic, 1 matched residual, 2 matched residual + DLSS.
     CustomOptional<uint32_t> DlssNrTransfer { 1 };
 
-    // 0 off, 1 the picture the model was shown, 2 its raw answer, 3 what it changed, amplified.
+    // 0 normal, 1 model input, 2 model answer, 3 amplified edit.
     CustomOptional<uint32_t> DlssNrDebugView { 0 };
 
-    // Showing the pass against itself, without having to toggle it and remember what the last frame
-    // looked like. 0 off, 1 side by side, 2 a wipe.
-    //
-    // Side by side squeezes the whole frame into each half, so it is a comparison rather than
-    // something to play in. The wipe cuts one frame and resamples nothing, so it is; the split is a
-    // stored setting and stays where it was put once the menu closes.
+    // 0 off, 1 side by side, 2 wipe.
     CustomOptional<uint32_t> DlssNrCompare { 0 };
     CustomOptional<float> DlssNrCompareSplit { 0.5f };
 
-    // Side by side only. 1 fits the whole frame at its right shape and accepts the bars; 2 fills
-    // the half and crops the sides off instead.
+    // Side by side: 1 fit, 2 fill/crop.
     CustomOptional<float> DlssNrCompareZoom { 1.0f };
 
-    // Which side the edited frame sits on, in both comparison modes.
     CustomOptional<bool> DlssNrCompareSwap { false };
 
-    // Labels drawn onto the two sides of a comparison, so a screenshot still says which is which.
-    // Drawn into the frame's own plane with a clip per side: in the wipe they are revealed and hidden
-    // by the split exactly as the images are, and there is nothing to drag.
     CustomOptional<bool> DlssNrCompareTags { false };
     CustomOptional<float> DlssNrTagScale { 1.5f };
 
-    // The fraction of the frame's resolution the model works at. The frame itself is never reduced --
-    // only the model's contribution is computed small and enlarged, so the picture underneath is
-    // untouched whatever this is set to. 1.0 is full resolution and behaves exactly as before.
+    // Model width/height scale; composition remains at the input size.
     CustomOptional<float> DlssNrWorkingScale { 1.0f };
 
-    // Filter used for NR supersampling (working scale > 1): the model runs above native, and this is
-    // the downscaler that averages its answer back to native. Independent of OutputScalingDownscaler
-    // so NR and Output Scaling can run different filters at once. Lanczos3 is the sharp default.
+    // Independent downsampling filter for NR model scales above 100%.
     CustomOptional<Scaler> DlssNrScalingDownscaler { Scaler::Lanczos3 };
 
-    // How many sequential model layers to run between one encode and one final composition. Each extra
-    // layer consumes the preceding model output and owns a persistent feature/history. The implementation
-    // deliberately caps this at three and never evaluates a feature on the command list that created it.
-    //
-    // 1 is what the model was trained for and what every published number describes. Above that it
-    // is being asked to enhance its own output, which is outside its training distribution: detail
-    // compounds, and so does anything it got wrong. Two often looks richer; three is the guarded
-    // ceiling because further layers converge while still paying the full cost.
-    //
-    // The cost is exactly linear -- the model is 98% of the frame's expense and every pass pays it
-    // again -- so 3 costs three times, near enough. There is no shortcut and no amortisation: the
-    // passes are sequential and each one needs the last one's output.
+    // Sequential layers with independent histories; up to 30 when unlocked.
     CustomOptional<uint32_t> DlssNrPasses { 1 };
 
-    // Which depth convention the model is told the guide uses.
-    //
-    //   0  what the game's own DLSS feature was created with, which is what it means for the upscaler
-    //   1  force normal
-    //   2  force inverted
-    //
-    // Writes one set of matched before/after frames per session, without anyone having to ask. The
-    // folder is cleared at the start of each run, so it holds one session's worth and never grows.
-    CustomOptional<bool> DlssNrAutoCapture { true };
-
-
-
-
-
-    // Multiplies the (auto or manual) white point before the encode: what the model considers "white".
-    // Higher means highlights sit lower on the curve and the model treats them as less extreme.
+    // Manual white-point divisor for the HDR-to-model encode.
     CustomOptional<float> DlssNrWhitePointScale { 1.0f };
-
-
-
-
 
     // --- end DLSS 5 Neural Rendering -------------------------------------------------------------
 

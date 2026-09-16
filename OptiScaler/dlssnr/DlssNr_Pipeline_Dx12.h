@@ -1,6 +1,7 @@
 #pragma once
 
 #include <upscalers/ShaderPipeline_Dx12.h>
+#include <algorithm>
 
 class DlssNr_Dx12;
 
@@ -28,6 +29,36 @@ struct InputStates_Dx12
     D3D12_RESOURCE_STATES depth;
     D3D12_RESOURCE_STATES motion;
     D3D12_RESOURCE_STATES exposure;
+};
+
+// Return each borrowed input to its arrival state, once even when guides alias.
+struct ReadableInputs_Dx12
+{
+    ID3D12GraphicsCommandList* commands;
+    std::vector<D3D12_RESOURCE_BARRIER> barriers;
+
+    void Read(ID3D12Resource* resource, D3D12_RESOURCE_STATES state)
+    {
+        if (!resource || std::any_of(barriers.begin(), barriers.end(),
+                                    [resource](const auto& b) { return b.Transition.pResource == resource; }))
+            return;
+        D3D12_RESOURCE_BARRIER barrier {};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Transition = { resource, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, state,
+                               D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE };
+        barriers.push_back(barrier);
+        if (state != D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
+            commands->ResourceBarrier(1, &barrier);
+    }
+    ~ReadableInputs_Dx12()
+    {
+        for (auto it = barriers.rbegin(); it != barriers.rend(); ++it)
+        {
+            std::swap(it->Transition.StateBefore, it->Transition.StateAfter);
+            if (it->Transition.StateBefore != it->Transition.StateAfter)
+                commands->ResourceBarrier(1, &*it);
+        }
+    }
 };
 
 // Shared arrival-state policy for NR input copies and private upscaler guides.

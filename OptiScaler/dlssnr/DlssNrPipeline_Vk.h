@@ -114,10 +114,8 @@ inline VkImageInfo PrepareInput(DlssNr_Vk& shader, VkCommandBuffer cmd, VkInstan
     if (!scratch.Image)
         return {};
     frame.BeforeUpscale = true;
-    ShaderPipeline_Vk pipeline;
-    pipeline.push_back(MakePass(shader, cmd, instance, depth, motion, frame, colour));
-    SetupShaderPipeline(pipeline, scratch);
-    if (pipeline.front().inputBuffer.Image && DispatchShaderPipeline(pipeline))
+    if (shader.Dispatch(cmd, colour, depth, motion, scratch, frame, instance,
+                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
         return scratch;
     return {};
 }

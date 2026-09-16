@@ -37,13 +37,13 @@ ID3D12Resource* NrResource(NVSDK_NGX_Parameter* parameters, const char* name, co
     return resource;
 }
 
-void NrBarrier(ID3D12GraphicsCommandList* commandList, ID3D12Resource* resource, D3D12_RESOURCE_STATES before,
-               D3D12_RESOURCE_STATES after)
+void NrBarrier(ID3D12GraphicsCommandList* commands, ID3D12Resource* resource,
+               D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after)
 {
-    if (resource == nullptr || before == after)
+    if (before == after)
         return;
     auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(resource, before, after);
-    commandList->ResourceBarrier(1, &barrier);
+    commands->ResourceBarrier(1, &barrier);
 }
 
 } // namespace
@@ -91,7 +91,6 @@ ShaderPass_Dx12 MakeDlssNrPass(DlssNr_Dx12& shader, ID3D12Device* device, ID3D12
 
     DlssNrFrameInfo frame {};
     frame.BeforeUpscale = beforeUpscale;
-    frame.PrivateColorCopy = beforeUpscale;
     frame.IndependentCommands = interop;
     frame.RayReconstruction = rayReconstruction;
     frame.SubmissionEpoch = submissionEpoch;
@@ -148,25 +147,7 @@ ShaderPass_Dx12 MakeDlssNrPass(DlssNr_Dx12& shader, ID3D12Device* device, ID3D12
         [=, &shader](ID3D12Resource* input, ID3D12Resource* output) -> bool
         {
             // Every guide is returned to the upscaler's input state, including failed NR evaluations.
-            struct RestoreInputs
-            {
-                ID3D12GraphicsCommandList* commandList;
-                std::vector<std::pair<ID3D12Resource*, D3D12_RESOURCE_STATES>> resources;
-                void Read(ID3D12Resource* resource, D3D12_RESOURCE_STATES state)
-                {
-                    if (resource == nullptr ||
-                        std::any_of(resources.begin(), resources.end(),
-                                    [resource](const auto& entry) { return entry.first == resource; }))
-                        return;
-                    resources.emplace_back(resource, state);
-                    NrBarrier(commandList, resource, state, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-                }
-                ~RestoreInputs()
-                {
-                    for (auto it = resources.rbegin(); it != resources.rend(); ++it)
-                        NrBarrier(commandList, it->first, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, it->second);
-                }
-            } restore { commandList };
+            DlssNr::ReadableInputs_Dx12 restore { commandList };
 
             if (beforeUpscale)
             {
@@ -209,11 +190,10 @@ ID3D12Resource* PrepareDlssNrInput(DlssNr_Dx12& shader, ID3D12Device* device, ID
     if (!shader.CreateBufferResource(device, color, D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
         return nullptr;
 
-    ShaderPipeline_Dx12 pipeline;
-    pipeline.push_back(MakeDlssNrPass(shader, device, commandList, parameters, true, featureFlags, timingQueue, interop,
-                                      rayReconstruction, submissionEpoch));
-    SetupShaderPipeline(pipeline, shader.Buffer());
-    if (pipeline.front().inputBuffer != nullptr && DispatchShaderPipeline(pipeline))
+    auto pass = MakeDlssNrPass(shader, device, commandList, parameters, true, featureFlags, timingQueue, interop,
+                               rayReconstruction, submissionEpoch);
+    auto* input = pass.Setup(shader.Buffer());
+    if (input && pass.Dispatch(input, shader.Buffer()))
         return shader.Buffer();
     return nullptr;
 }

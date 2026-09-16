@@ -8,7 +8,6 @@ namespace DlssNr::Detail
 {
 struct ModelStateDx12
 {
-    unsigned long long successfulDispatches = 0;
     // Each model pass owns its NGX feature, parameters and temporal history.
     DlssNr::Proxy::Context models[DlssNr::MaxPassCount];
     bool passCreateFailed[DlssNr::MaxPassCount] = {};

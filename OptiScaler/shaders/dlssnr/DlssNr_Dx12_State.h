@@ -37,12 +37,9 @@
 #include <mutex>
 #include <algorithm>
 #include <cstring>
-#include "DlssNr_ResidualPair.h"
 #include "../output_scaling/OS_Dx12.h"
 
-
 using DlssNr::Profiles::PassSettings;
-
 
 struct DlssNr_Dx12::State
 {
@@ -50,10 +47,7 @@ struct DlssNr_Dx12::State
     // NGX result names for diagnostics.
     const char* NgxResultName(unsigned int r);
 
-
-
-    using NrState = DlssNr::Detail::ModelStateDx12;
-    NrState nr;
+    DlssNr::Detail::ModelStateDx12 nr;
     DlssNr_Dx12& shader;
     struct Enlarger
     {
@@ -134,7 +128,6 @@ struct DlssNr_Dx12::State
 
     void ParkNrResource(ID3D12Resource*& resource);
 
-    void ReleaseSurfacesIfFormatChanged(DXGI_FORMAT needed);
     void ReleaseSupersamplers();
 
     ID3D12Resource* CreateScratch(ID3D12Device* device, DXGI_FORMAT format, unsigned int width, unsigned int height);
@@ -147,8 +140,6 @@ struct DlssNr_Dx12::State
     // substituted; CopyResource accepts that as a destination for the typeless original.
     DXGI_FORMAT TypedGuideFormat(DXGI_FORMAT f);
 
-    bool IsTypeless(DXGI_FORMAT f);
-
     // Creates a typed twin of a guide buffer, matching everything but the format.
     ID3D12Resource* CreateGuideClone(ID3D12Device* device, ID3D12Resource* source);
 
@@ -160,8 +151,6 @@ struct DlssNr_Dx12::State
     // Try both SR and ray-reconstruction parameter names; absent values return null.
 
     ID3D12Resource* GetResource(NVSDK_NGX_Parameter* params, const char* a, const char* b);
-
-    bool TuningMatchesFeature(const Config& cfg, unsigned int requestedPasses);
 
     // Serialize rendering, presentation and submission callbacks; destruction can re-enter hooks.
     std::recursive_mutex mutex;
@@ -261,7 +250,6 @@ struct DlssNr_Dx12::State
     };
     DeferredSrContext deferredSr { *this };
 
-
     struct LateContext
     {
         State& owner;
@@ -329,8 +317,6 @@ struct DlssNr_Dx12::State
 
     bool WaitForFinishedPicture();
 
-    std::string FinishedPictureStatus();
-
     void FinishedPictureSubmitted(ID3D12CommandQueue* queue, UINT count, ID3D12CommandList* const* lists);
 
     DXGI_COLOR_SPACE_TYPE FinishedColorSpace(IDXGISwapChain* swapchain, DXGI_FORMAT format);
@@ -362,17 +348,8 @@ struct DlssNr_Dx12::State
     DlssNrConstants MakeResolveConstants(const EncodeContext& context, unsigned int effectivePasses);
     void EndGpuTiming(ID3D12GraphicsCommandList* cmdList);
 
-    void Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* colour, ID3D12Resource* depth, ID3D12Resource* motion,
-             ID3D12Resource* output, const DlssNrFrameInfo& frame, ID3D12CommandQueue* timingQueue);
-
-    std::string DeferredDlssStatus();
-
-    void RetryAfterFailure();
-
-    // Adapt the game's NGX parameters into the explicit NR frame contract.
-    void EvaluateInternal(ID3D12GraphicsCommandList* cmdList, NVSDK_NGX_Parameter* params, bool beforeUpscale,
-                          ID3D12CommandQueue* timingQueue, bool rayReconstruction, unsigned long long submissionEpoch,
-                          bool interop);
+    bool Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* target, ID3D12Resource* depth, ID3D12Resource* motion,
+             const DlssNrFrameInfo& frame, ID3D12CommandQueue* timingQueue);
 
     void ReleaseResources();
 

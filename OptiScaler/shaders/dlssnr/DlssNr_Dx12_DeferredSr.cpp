@@ -271,7 +271,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
         DlssNrConstants unit {};
         unit.Mode = DlssNrMode_UnitExposure;
         unit.Width = unit.Height = 1;
-        if (!g.codec->DispatchPass(cmd, unit, g.edited, nullptr, nullptr, nullptr, nullptr, g.exposure,
+        if (!g.codec->DispatchPass(cmd, unit, g.edited, nullptr, nullptr, nullptr, g.exposure,
                                    nullptr))
         {
             g.failed = true;
@@ -302,7 +302,8 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
                   D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
     DlssNrFrameInfo frame {};
-    frame.BeforeUpscale = frame.PrivateColorCopy = true;
+    frame.BeforeUpscale = true;
+    frame.OutputArrivalState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
     frame.RayReconstruction = rayReconstruction;
     frame.SubmissionEpoch = submittedEpoch;
     frame.RenderSubrectWidth = g.w;
@@ -320,28 +321,10 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
     frame.MvScaleX = Float(source, NVSDK_NGX_Parameter_MV_Scale_X, 1);
     frame.MvScaleY = Float(source, NVSDK_NGX_Parameter_MV_Scale_Y, 1);
     frame.PreExposure = std::max(Float(source, NVSDK_NGX_Parameter_DLSS_Pre_Exposure, 1), 1e-4f);
-    const auto before = owner.nr.successfulDispatches;
+    bool evaluated = false;
     {
         // Run consumes readable guides; restore their arrival states even when NR declines the frame.
-        struct RestoreGuides
-        {
-            State& owner;
-            ID3D12GraphicsCommandList* cmd;
-            std::vector<std::pair<ID3D12Resource*, D3D12_RESOURCE_STATES>> resources;
-            void Read(ID3D12Resource* resource, D3D12_RESOURCE_STATES state)
-            {
-                if (!resource || std::any_of(resources.begin(), resources.end(),
-                                             [resource](const auto& entry) { return entry.first == resource; }))
-                    return;
-                resources.emplace_back(resource, state);
-                owner.Barrier(cmd, resource, state, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            }
-            ~RestoreGuides()
-            {
-                for (auto it = resources.rbegin(); it != resources.rend(); ++it)
-                    owner.Barrier(cmd, it->first, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, it->second);
-            }
-        } restore { owner, cmd };
+        DlssNr::ReadableInputs_Dx12 restore { cmd };
         auto read = [&](ID3D12Resource* resource, D3D12_RESOURCE_STATES state)
         {
             // A guide may alias Color. The game Color has already returned to its colour arrival state;
@@ -351,9 +334,8 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
         };
         read(depth, inputStates.depth);
         read(motion, inputStates.motion);
-        owner.Run(cmd, g.edited, depth, motion, g.edited, frame, queue);
+        evaluated = owner.Run(cmd, g.edited, depth, motion, frame, queue);
     }
-    const bool evaluated = owner.nr.successfulDispatches != before;
     if (evaluated)
     {
         ScopedNrStateEnvelope envelope(cmd);
@@ -437,7 +419,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
                                                true);
         }
         else
-            ok = g.codec->DispatchPass(cmd, encode, color, g.edited, nullptr, nullptr, nullptr, g.residualInput,
+            ok = g.codec->DispatchPass(cmd, encode, color, g.edited, nullptr, nullptr, g.residualInput,
                                        nullptr);
         owner.Barrier(cmd, color, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, arrival);
         owner.Barrier(cmd, g.residualInput, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
@@ -554,7 +536,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::After(ID3D12GraphicsCommandList* cmd
     apply.Width = g.outW;
     apply.Height = g.outH;
     apply.ResidualScale = pair.scale;
-    const bool ok = g.codec->DispatchPass(cmd, apply, g.clean, g.residualOutput, nullptr, nullptr, nullptr,
+    const bool ok = g.codec->DispatchPass(cmd, apply, g.clean, g.residualOutput, nullptr, nullptr,
                                           g.composed, nullptr);
     if (ok)
     {

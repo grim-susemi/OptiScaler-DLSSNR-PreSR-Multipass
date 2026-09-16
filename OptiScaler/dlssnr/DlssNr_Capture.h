@@ -3,7 +3,6 @@
 #include "DlssNr_GpuLifetime.h"
 #include <algorithm>
 #include <cstdio>
-#include <cstring>
 #include <vector>
 
 namespace capture
@@ -17,8 +16,7 @@ class FrameCapture
     struct Data
     {
         std::vector<Pair> pairs;
-        Microsoft::WRL::ComPtr<ID3D12QueryHeap> query;
-        Microsoft::WRL::ComPtr<ID3D12Resource> stamps;
+        DlssNr::CaptureTimestamps timestamps;
         unsigned recorded = 0;
 
         bool Init(ID3D12Device* device, ID3D12Resource* before, ID3D12Resource* after, unsigned count)
@@ -27,29 +25,7 @@ class FrameCapture
             for (auto& pair : pairs)
                 if (!pair.before.Allocate(device, before->GetDesc()) || !pair.after.Allocate(device, after->GetDesc()))
                     return false;
-            D3D12_QUERY_HEAP_DESC desc { D3D12_QUERY_HEAP_TYPE_TIMESTAMP, count, 0 };
-            if (FAILED(device->CreateQueryHeap(&desc, IID_PPV_ARGS(&query))) ||
-                !DlssNr::CreateReadbackBuffer(device, count * sizeof(UINT64), &stamps))
-                return false;
-            void* mapped = nullptr;
-            D3D12_RANGE empty {}, written { 0, count * sizeof(UINT64) };
-            if (FAILED(stamps->Map(0, &empty, &mapped)))
-                return false;
-            std::memset(mapped, 0, written.End);
-            stamps->Unmap(0, &written);
-            return true;
-        }
-
-        bool AllSubmitted() const
-        {
-            void* mapped = nullptr;
-            D3D12_RANGE range { 0, recorded * sizeof(UINT64) }, empty {};
-            if (FAILED(stamps->Map(0, &range, &mapped)))
-                return false;
-            const auto* values = static_cast<const UINT64*>(mapped);
-            const bool complete = std::all_of(values, values + recorded, [](UINT64 value) { return value != 0; });
-            stamps->Unmap(0, &empty);
-            return complete;
+            return timestamps.Init(device, count);
         }
     };
     std::unique_ptr<Data> data_;
@@ -97,9 +73,7 @@ class FrameCapture
         lifetime_.Record(cmd);
         pair.before.Copy(cmd, before, beforeState);
         pair.after.Copy(cmd, after, afterState);
-        cmd->EndQuery(data_->query.Get(), D3D12_QUERY_TYPE_TIMESTAMP, data_->recorded);
-        cmd->ResolveQueryData(data_->query.Get(), D3D12_QUERY_TYPE_TIMESTAMP, data_->recorded, 1,
-                              data_->stamps.Get(), data_->recorded * sizeof(UINT64));
+        data_->timestamps.Record(cmd, data_->recorded);
         ++data_->recorded;
     }
 
@@ -107,7 +81,7 @@ class FrameCapture
     {
         if (!data_ || data_->recorded != wanted_ || !lifetime_.Idle())
             return {};
-        if (!data_->AllSubmitted())
+        if (!data_->timestamps.Completed(data_->recorded))
         {
             const auto retry = wanted_;
             release(); request(retry);

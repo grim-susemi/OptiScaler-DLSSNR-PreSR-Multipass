@@ -1,20 +1,17 @@
 #include "pch.h"
 #include "DlssNr_Dx12_State.h"
 
-auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* colour, ID3D12Resource* depth, ID3D12Resource* motion,
-             ID3D12Resource* output, const DlssNrFrameInfo& frame, ID3D12CommandQueue* timingQueue) -> void
+auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* target, ID3D12Resource* depth, ID3D12Resource* motion,
+              const DlssNrFrameInfo& frame, ID3D12CommandQueue* timingQueue) -> bool
 {
     std::lock_guard<std::recursive_mutex> nrLock(mutex);
     const Config& cfg = *Config::Instance();
 
-    if (nr.failed || cmdList == nullptr || colour == nullptr || depth == nullptr || motion == nullptr ||
-        output == nullptr)
+    if (nr.failed || cmdList == nullptr || target == nullptr || depth == nullptr || motion == nullptr)
     {
         ReportSkipOnce(nr.failed ? "it already failed this session" : "a resource was missing");
-        return;
+        return false;
     }
-
-    ID3D12Resource* target = output;
 
     // Guard creation and dispatch together: either can record GPU work and alter compute bindings.
     const bool restoreRequired =
@@ -22,7 +19,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     if (restoreRequired && !frame.IndependentCommands && !D3D12Hooks::CanRestoreRootSignature(cmdList))
     {
         ReportSkipOnce("the upscaler could not restore state this frame");
-        return;
+        return false;
     }
     lifetime.Record(cmdList);
     ScopedNrStateEnvelope stateEnvelope(cmdList);
@@ -30,15 +27,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     // A completed upscaler output normally arrives as a UAV. The pre-SR colour input instead arrives
     // readable. Track every transition so both paths return the resource exactly as their caller gave
     // it to us; a pre-SR resource without UAV support is written through a scratch-and-copy fallback.
-    const D3D12_RESOURCE_STATES outputArrival =
-        frame.PipelineManagedStates ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS
-        : frame.FinishedPicture     ? (D3D12_RESOURCE_STATES) frame.OutputArrivalState
-        : frame.BeforeUpscale ? (!frame.PrivateColorCopy && Config::Instance()->ColorResourceBarrier.has_value()
-                                     ? (D3D12_RESOURCE_STATES) Config::Instance()->ColorResourceBarrier.value()
-                                     : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
-        : Config::Instance()->OutputResourceBarrier.has_value()
-            ? (D3D12_RESOURCE_STATES) Config::Instance()->OutputResourceBarrier.value()
-            : D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    const auto outputArrival = static_cast<D3D12_RESOURCE_STATES>(frame.OutputArrivalState);
     D3D12_RESOURCE_STATES targetState = outputArrival;
     const auto TransitionTarget = [&](D3D12_RESOURCE_STATES to)
     {
@@ -51,7 +40,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     if (FAILED(target->GetDevice(IID_PPV_ARGS(&deviceRef))))
     {
         ReportSkipOnce("the output texture belongs to no D3D12 device");
-        return;
+        return false;
     }
 
     auto* device = deviceRef.Get();
@@ -63,7 +52,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     if (!active)
     {
         ReportSkipOnce("the pre-SR active colour size is invalid");
-        return;
+        return false;
     }
     const auto width = active->width;
     const auto height = active->height;
@@ -81,7 +70,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     if (!guides.depth.valid() || !guides.motion.valid())
     {
         ReportSkipOnce("depth or motion-vector subrect is empty");
-        return;
+        return false;
     }
     const auto guideWidth = guides.depth.width, guideHeight = guides.depth.height;
 
@@ -120,7 +109,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         nr.failed = true;
         nr.reason = "the NVIDIA NGX driver does not provide Neural Rendering";
         LOG_ERROR("DLSS-NR unavailable: {}", nr.reason);
-        return;
+        return false;
     }
 
     // Only the model runs at working resolution; source and composition remain at native size.
@@ -133,7 +122,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     const bool reduced = workWidth != width || workHeight != height;
     if (!PrepareRunModels(cmdList, device, frame, desc, { width, height }, { workWidth, workHeight },
                           workScale, requestedPasses))
-        return;
+        return false;
     // The parameter adapter already combined the HDR flag with the active color format.
     const bool isHdrBuffer = frame.ColourIsLinearHdr;
 
@@ -152,7 +141,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         nr.failed = true;
         nr.reason = "the colour codec would not compile";
         LOG_ERROR("DLSS-NR unavailable: {}", nr.reason);
-        return;
+        return false;
     }
 
     // Advance capture scheduling only once the codec and models are ready.
@@ -226,7 +215,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         nr.reset = true;
         ReportSkipOnce("the game's depth or motion vectors could not be made readable this frame");
         FinishColor(false);
-        return;
+        return false;
     }
 
     // The vectors were scaled to full-frame pixels; the image the model reprojects is the working size.
@@ -266,30 +255,17 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     bool clampFailed = false;
     uint32_t clampSlots[2] = { UINT32_MAX, UINT32_MAX };
 
-    const auto MakeModelReadable = [&](ID3D12Resource* resource)
+    const auto SetModelReadable = [&](ID3D12Resource* resource, bool next)
     {
         bool& readable = resource == nr.output      ? outputReadable
                          : resource == nr.passClamp ? clampReadable
                                                     : scratchReadable;
-        if (!readable)
-        {
-            Barrier(cmdList, resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            readable = true;
-        }
-    };
-
-    const auto MakeModelWritable = [&](ID3D12Resource* resource)
-    {
-        bool& readable = resource == nr.output      ? outputReadable
-                         : resource == nr.passClamp ? clampReadable
-                                                    : scratchReadable;
-        if (readable)
-        {
-            Barrier(cmdList, resource, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-            readable = false;
-        }
+        if (readable == next)
+            return;
+        const auto read = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        const auto write = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        Barrier(cmdList, resource, readable ? read : write, next ? read : write);
+        readable = next;
     };
 
     int result = NVSDK_NGX_Result_Success;
@@ -308,7 +284,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
 
     for (unsigned int pass = 0; pass < effectivePasses && result == NVSDK_NGX_Result_Success; ++pass)
     {
-        MakeModelWritable(passOutput);
+        SetModelReadable(passOutput, false);
         bool evaluated = false;
         modelFrame.color = passInput;
         modelFrame.output = passOutput;
@@ -319,16 +295,16 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
             break;
 
         finalAnswer = passOutput;
-        MakeModelReadable(finalAnswer);
+        SetModelReadable(finalAnswer, true);
 
         if (pass + 1 < effectivePasses)
         {
-            MakeModelWritable(nr.passClamp);
+            SetModelReadable(nr.passClamp, false);
             DlssNrConstants clamp {};
             clamp.Mode = DlssNrMode_ClampProxy;
             clamp.Width = workWidth;
             clamp.Height = workHeight;
-            if (!shader.DispatchPass(cmdList, clamp, finalAnswer, nullptr, nullptr, nullptr, nullptr, nr.passClamp,
+            if (!shader.DispatchPass(cmdList, clamp, finalAnswer, nullptr, nullptr, nullptr, nr.passClamp,
                                      nullptr, &clampSlots[pass % 2]))
             {
                 // Keep this frame's last valid answer; later histories skipped a frame.
@@ -336,7 +312,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
                 effectivePasses = pass + 1;
                 break;
             }
-            MakeModelReadable(nr.passClamp);
+            SetModelReadable(nr.passClamp, true);
             passInput = nr.passClamp;
             passOutput = passOutput == nr.output ? nr.passScratch : nr.output;
         }
@@ -412,7 +388,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         }
 
         const bool resolved = enlargementReady && shader.DispatchPass(cmdList, resolveParams, resolveProxy, resolveAnswer,
-                                                  resolveOriginal, motionIn, nullptr, resolveTarget, nullptr);
+                                                  resolveOriginal, motionIn, resolveTarget, nullptr);
         compositionSucceeded = resolved;
 
         if (resolved && !targetSupportsUav)
@@ -455,21 +431,19 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     }
 
     // Restore all intermediate surfaces to the UAV state expected by the next frame.
-    MakeModelWritable(nr.output);
+    SetModelReadable(nr.output, false);
     if (nr.passScratch != nullptr)
-        MakeModelWritable(nr.passScratch);
+        SetModelReadable(nr.passScratch, false);
 
     Barrier(cmdList, nr.hdrCopy, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
             D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
     if (nr.passClamp != nullptr)
-        MakeModelWritable(nr.passClamp);
+        SetModelReadable(nr.passClamp, false);
 
     // Failed evaluations leave the game's original image intact. A successful copy-back writes
     // only the active rectangle and restores both resources before DLSS consumes the image.
     FinishColor(compositionSucceeded);
-    if (compositionSucceeded)
-        ++nr.successfulDispatches;
 
     EndGpuTiming(cmdList);
 
@@ -489,4 +463,5 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     // Leave the staging copy as the next frame expects to find it.
     Barrier(cmdList, nr.colorCopy, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
             D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    return compositionSucceeded;
 }

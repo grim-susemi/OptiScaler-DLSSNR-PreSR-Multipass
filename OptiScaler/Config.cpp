@@ -350,7 +350,6 @@ bool Config::Reload(std::filesystem::path iniPath)
             else
                 DlssNrScalingDownscaler.reset();
             DlssNrPasses.set_from_config(readUInt("DlssNr", "Passes"));
-            DlssNrAutoCapture.set_from_config(readBool("DlssNr", "AutoCapture"));
             DlssNrWhitePointScale.set_from_config(readFloat("DlssNr", "WhitePointScale"));
             DlssNrPreset.set_from_config(readUInt("DlssNr", "Preset"));
             DlssNrIntensity.set_from_config(readFloat("DlssNr", "Intensity"));
@@ -1255,7 +1254,7 @@ bool Config::SaveIni()
     ini.Delete("DlssNr", "Precision"); // Remove the obsolete backend selector from saved configurations.
     for (const char* key : { "ScanExposure", "ScanMeter", "ScanTrim", "ScanAnchorValue",
                              "ScanAnchorWhitePoint", "ScanAnchors", "ScanInverted",
-                             "WhitePointSource", "WhitePointFromExposure", "WhitePointTrim", "SkinToneEnabled" })
+                             "WhitePointSource", "WhitePointFromExposure", "WhitePointTrim", "SkinToneEnabled", "AutoCapture" })
         ini.Delete("DlssNr", key);
     {
         auto toggle = Instance()->DlssNrToggleKey.value_for_config();
@@ -1282,7 +1281,6 @@ bool Config::SaveIni()
                  GetFloatValue(Instance()->DlssNrTagScale.value_for_config()).c_str());
     ini.SetValue("DlssNr", "WorkingScale", GetFloatValue(Instance()->DlssNrWorkingScale.value_for_config()).c_str());
     ini.SetValue("DlssNr", "ScalingDownscaler", GetIntValue(Instance()->DlssNrScalingDownscaler).c_str());
-    ini.SetValue("DlssNr", "AutoCapture", GetBoolValue(Instance()->DlssNrAutoCapture.value_for_config()).c_str());
 
     ini.SetValue("DlssNr", "Passes", GetIntValue(Instance()->DlssNrPasses.value_for_config()).c_str());
     ini.SetValue("DlssNr", "WhitePointScale",

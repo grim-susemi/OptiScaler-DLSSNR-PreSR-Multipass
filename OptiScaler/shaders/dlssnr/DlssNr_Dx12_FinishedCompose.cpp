@@ -138,7 +138,7 @@ auto DlssNr_Dx12::State::ApplyFinishedColor(ID3D12Resource* color, ID3D12Command
             Barrier(cmd, color, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
         }
     }
-    const auto before = nr.successfulDispatches;
+    bool rendered = false;
     bool appliedResidual = false;
     bool matchedResponse = false;
     if (slot.residualOnly)
@@ -282,8 +282,8 @@ auto DlssNr_Dx12::State::ApplyFinishedColor(ID3D12Resource* color, ID3D12Command
             }
         }
         if (colorReady)
-            Run(cmd, nrColor, slot.depth.Get(), slot.motion.Get(), nrColor, frame, queue);
-        if (pq && colorReady && nr.successfulDispatches > before &&
+            rendered = Run(cmd, nrColor, slot.depth.Get(), slot.motion.Get(), frame, queue);
+        if (pq && colorReady && rendered &&
             Config::Instance()->DlssNrApplyModel.value_or_default())
         {
             conversion.Mode = 1;
@@ -337,7 +337,7 @@ auto DlssNr_Dx12::State::ApplyFinishedColor(ID3D12Resource* color, ID3D12Command
         late.heldSlot = &slot;
         late.heldSlotSerial = slot.serial;
     }
-    const bool ran = slot.residualOnly ? appliedResidual : nr.successfulDispatches > before;
+    const bool ran = slot.residualOnly ? appliedResidual : rendered;
     late.reset = !ran;
     late.Say(!Config::Instance()->DlssNrApplyModel.value_or_default() ? "NR changes are hidden."
              : ran                                                    ? (slot.residualOnly

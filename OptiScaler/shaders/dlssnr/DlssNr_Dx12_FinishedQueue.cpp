@@ -69,12 +69,6 @@ auto DlssNr_Dx12::State::WaitForFinishedPicture() -> bool
     return late.dx11.Drain();
 }
 
-auto DlssNr_Dx12::State::FinishedPictureStatus() -> std::string
-{
-    std::lock_guard<std::recursive_mutex> lock(mutex);
-    return late.status;
-}
-
 auto DlssNr_Dx12::State::FinishedPictureSubmitted(ID3D12CommandQueue* queue, UINT count, ID3D12CommandList* const* lists) -> void
 {
     std::lock_guard<std::recursive_mutex> lock(mutex);

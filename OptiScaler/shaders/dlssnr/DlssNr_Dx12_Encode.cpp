@@ -104,7 +104,7 @@ void DlssNr_Dx12::State::EncodeInput(EncodeContext& context)
     encodeParams.Height = height;
 
     TransitionTarget(D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    shader.DispatchPass(cmdList, encodeParams, target, nullptr, nullptr, nullptr, nullptr, nr.colorCopy,
+    shader.DispatchPass(cmdList, encodeParams, target, nullptr, nullptr, nullptr, nr.colorCopy,
                         nr.hdrCopy);
 
     if (targetSupportsUav)
@@ -171,7 +171,7 @@ void DlssNr_Dx12::State::EncodeInput(EncodeContext& context)
             down.Mode = DlssNrMode_Downsample;
             down.Width = workWidth;
             down.Height = workHeight;
-            shader.DispatchPass(cmdList, down, modelInput, nullptr, nullptr, nullptr, nullptr, nr.colorSmall,
+            shader.DispatchPass(cmdList, down, modelInput, nullptr, nullptr, nullptr, nr.colorSmall,
                                 nullptr);
             Barrier(cmdList, nr.colorSmall, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                     D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);

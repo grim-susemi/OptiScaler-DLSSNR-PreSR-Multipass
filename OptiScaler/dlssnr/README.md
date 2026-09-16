@@ -25,8 +25,8 @@ Paths are relative to `OptiScaler/dlssnr` unless prefixed with `shaders/`, which
 | --- | --- |
 | `DlssNr_Pipeline_Dx12.*`, `DlssNrPipeline_Vk.h` | Upscaler adapters |
 | `DlssNrFeature_Vk*`, `DlssNrFinished_Vk*` | Native Vulkan model/resources/presentation |
-| `DlssNr_Menu*`, `DlssNr_PipelineUi.h` | Controls and chart |
-| `shaders/dlssnr/DlssNr_Dx12_{Run,Encode,Evaluate}*` | Frame processing and composition |
+| `DlssNr_Menu.cpp`, `DlssNr_MenuControls.cpp`, `DlssNr_MenuOverlay.*`, `DlssNr_PipelineUi.h` | Menu routing/status, controls, comparison tags and chart |
+| `shaders/dlssnr/DlssNr_Dx12_{Run,Encode}*` | Frame processing and composition |
 | `shaders/dlssnr/DlssNr_Dx12_{Models,Resources,State,ModelState}*` | Model/resource ownership |
 | `shaders/dlssnr/DlssNr_Dx12_{DeferredSr,Enlarge}*`, `shaders/dlssnr/DlssNr_Upscaler_Dx12*` | Private upscaling |
 | `shaders/dlssnr/DlssNr_Dx12_{Late,FinishedQueue,FinishedCompose}*` | Capture, submission and presentation |

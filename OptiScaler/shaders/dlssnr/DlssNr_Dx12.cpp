@@ -129,19 +129,19 @@ DlssNr_Dx12::DlssNr_Dx12(std::string InName, ID3D12Device* InDevice)
 
 bool DlssNr_Dx12::DispatchPass(ID3D12GraphicsCommandList* InCmdList, const DlssNrConstants& InConstants,
                                ID3D12Resource* InSource, ID3D12Resource* InModel, ID3D12Resource* InOriginal,
-                               ID3D12Resource* InMotion, ID3D12Resource* InPrevEdit, ID3D12Resource* OutTarget,
+                               ID3D12Resource* InMotion, ID3D12Resource* OutTarget,
                                ID3D12Resource* OutKeep, uint32_t* immutableSlot)
 {
     std::lock_guard ownersLock(nrOwnersMutex);
     std::lock_guard stateLock(_state->mutex);
     return DispatchCompute(InCmdList, InConstants, _pipelineState, InSource, InModel, InOriginal,
-                           InMotion, InPrevEdit, OutTarget, OutKeep, immutableSlot);
+                           InMotion, OutTarget, OutKeep, immutableSlot);
 }
 
 bool DlssNr_Dx12::DispatchCompute(ID3D12GraphicsCommandList* InCmdList, const DlssNrConstants& InConstants,
                                  ID3D12PipelineState* pipeline, ID3D12Resource* InSource,
                                  ID3D12Resource* InModel, ID3D12Resource* InOriginal,
-                                 ID3D12Resource* InMotion, ID3D12Resource* InPrevEdit,
+                                 ID3D12Resource* InMotion,
                                  ID3D12Resource* OutTarget, ID3D12Resource* OutKeep, uint32_t* immutableSlot)
 {
     _state->lifetime.Record(InCmdList);
@@ -165,7 +165,7 @@ bool DlssNr_Dx12::DispatchCompute(ID3D12GraphicsCommandList* InCmdList, const Dl
             InModel != nullptr ? InModel : InSource,
             InOriginal != nullptr ? InOriginal : InSource,
             InMotion != nullptr ? InMotion : InSource,
-            InPrevEdit != nullptr ? InPrevEdit : InSource,
+            InSource, // Unused t4 binding; keep the shared shader layout.
         };
 
         for (uint32_t i = 0; i < kSrvCount; ++i)
@@ -287,7 +287,7 @@ bool DlssNr_Dx12::DispatchResidualPass(ID3D12GraphicsCommandList* InCmdList, con
                               sizeof(dlssnr_finished_color_cso), nullptr);
     auto* pipeline = finishedColor ? _finishedColorPipelineState : _residualPipelineState;
     return DispatchCompute(InCmdList, InConstants, pipeline, InSource, InModel, InOriginal,
-                           InMotion, nullptr, OutTarget, nullptr, nullptr);
+                           InMotion, OutTarget, nullptr, nullptr);
 }
 
 bool DlssNr_Dx12::CreateBufferResource(ID3D12Device* device, ID3D12Resource* source, D3D12_RESOURCE_STATES state)
@@ -326,7 +326,6 @@ void DlssNr_Dx12::SetBufferState(ID3D12GraphicsCommandList* cmdList, D3D12_RESOU
 }
 
 ID3D12Resource* DlssNr_Dx12::Buffer() { return _state->buffer; }
-bool DlssNr_Dx12::CanRender() const { return _init && _state->buffer != nullptr; }
 
 bool DlssNr_Dx12::Dispatch(ID3D12GraphicsCommandList* cmd, ID3D12Resource* colour, ID3D12Resource* depth,
                            ID3D12Resource* motion, ID3D12Resource* output, const DlssNrFrameInfo& frame,
@@ -344,8 +343,7 @@ bool DlssNr_Dx12::Dispatch(ID3D12GraphicsCommandList* cmd, ID3D12Resource* colou
     if (!_init || !cmd || !colour || !depth || !motion || !output)
         return false;
     auto info = frame;
-    info.PipelineManagedStates = true;
-    info.PrivateColorCopy = true;
+    info.OutputArrivalState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     if (!info.RenderSubrectWidth)
         info.RenderSubrectWidth = info.Width;
     if (!info.RenderSubrectHeight)
@@ -361,9 +359,7 @@ bool DlssNr_Dx12::Dispatch(ID3D12GraphicsCommandList* cmd, ID3D12Resource* colou
         _state->Barrier(cmd, colour, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         _state->Barrier(cmd, output, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
-    const auto before = _state->nr.successfulDispatches;
-    _state->Run(cmd, output, depth, motion, output, info, queue);
-    return _state->nr.successfulDispatches != before;
+    return _state->Run(cmd, output, depth, motion, info, queue);
 }
 
 void DlssNr_Dx12::BeginInputHold(ID3D12GraphicsCommandList* cmd, NVSDK_NGX_Parameter* params,
@@ -387,34 +383,76 @@ bool DlssNr_Dx12::ProcessSeam(ID3D12GraphicsCommandList* cmd, NVSDK_NGX_Paramete
     std::lock_guard ownersLock(nrOwnersMutex);
     ActivateNrOwner(this);
     std::lock_guard stateLock(_state->mutex);
-    _state->ConsumeControls();
-    _state->featureFlags = featureFlags;
+    auto& state = *_state;
+    state.ConsumeControls();
+    state.featureFlags = featureFlags;
+    struct Publish
+    {
+        State& state;
+        ~Publish() { state.Publish(); }
+    } publish { state };
     const auto& cfg = *Config::Instance();
     // Both seams reach this scheduler; ordinary passes remain in the shared shader pipeline.
     const auto placement = DlssNr::ResolvePlacement(
         cfg.DlssNrRunBeforeSr.value_or_default(), cfg.DlssNrDeferredDlss.value_or_default(),
         cfg.DlssNrResidualAcrossRr.value_or_default(), cfg.DlssNrFinishedPicture.value_or_default());
     const bool special = placement.finished || placement.deferred;
-    if (special)
-        _state->EvaluateInternal(cmd, params, beforeUpscale, queue, rayReconstruction, submissionEpoch, interop);
-    else
+    const unsigned finishedMode = !placement.finished ? 0u : placement.deferred ? 2u : 1u;
+    if (state.lastFinishedMode != finishedMode)
     {
-        if (_state->lastFinishedMode != 0)
+        state.lastFinishedMode = finishedMode;
+        state.nr.reset = true;
+        if (state.gpuTime) state.gpuTime->ClearLast();
+        if (state.ngxTime) state.ngxTime->ClearLast();
+        state.lastGpuTime.reset();
+        state.lastNgxTime.reset();
+        if (special)
         {
-            _state->lastFinishedMode = 0;
-            _state->nr.reset = true;
-            if (_state->gpuTime)
-                _state->gpuTime->ClearLast();
-            if (_state->ngxTime)
-                _state->ngxTime->ClearLast();
-            _state->lastGpuTime.reset();
-            _state->lastNgxTime.reset();
+            state.late.Cancel();
+            state.deferredSr.Cancel();
         }
-        _state->late.Cancel();
-        _state->deferredSr.Cancel();
     }
-    _state->Publish();
-    return special;
+    if (!special || !cfg.DlssNrEnabled.value_or_default())
+    {
+        state.late.Cancel();
+        state.deferredSr.Cancel();
+        return special;
+    }
+    if (placement.finished)
+    {
+        const auto& app = ::State::Instance();
+        const bool dx11 = app.swapchainApi == API::DX11 || app.swapchainInteropApi == SwapchainInteropApi::Dx11wDx12;
+        if ((interop || app.swapchainInteropApi != SwapchainInteropApi::None) && !dx11)
+        {
+            state.deferredSr.Cancel();
+            state.late.Cancel();
+            state.late.Say("This finished-picture route requires DirectX 12 or the DirectX 11 bridge.");
+            return true;
+        }
+        if (!placement.deferred)
+        {
+            state.deferredSr.Cancel();
+            if (beforeUpscale)
+                state.late.Capture(cmd, params, rayReconstruction);
+            return true;
+        }
+    }
+    else
+        state.late.Cancel();
+
+    // Pair the early edit with the matching clean SR/RR output or finished picture.
+    if (!cmd || !params)
+    {
+        state.deferredSr.Cancel();
+        return true;
+    }
+    const auto submitted = interop ? submissionEpoch : ::State::Instance().frameCount;
+    const auto epoch = state.seamClock.AtSeam(beforeUpscale, interop, submitted);
+    if (beforeUpscale)
+        state.deferredSr.Before(cmd, params, epoch, submitted, queue, interop, rayReconstruction);
+    else
+        state.deferredSr.After(cmd, params, epoch);
+    return true;
 }
 void DlssNr_Dx12::DiagnosePipeline(unsigned stage, ID3D12GraphicsCommandList* cmd,
                                   NVSDK_NGX_Parameter* params, ID3D12Resource* color,
@@ -548,8 +586,16 @@ void DlssNr_Dx12::ApplyFinishedDx11(IDXGISwapChain* swapchain)
     _state->ApplyToFinishedPictureDx11(swapchain);
     _state->Publish();
 }
-std::string DlssNr_Dx12::FinishedStatus() { return _state->FinishedPictureStatus(); }
-std::string DlssNr_Dx12::DeferredStatus() { return _state->DeferredDlssStatus(); }
+std::string DlssNr_Dx12::FinishedStatus()
+{
+    std::lock_guard lock(_state->mutex);
+    return _state->late.status;
+}
+std::string DlssNr_Dx12::DeferredStatus()
+{
+    std::lock_guard lock(_state->mutex);
+    return _state->deferredSr.status;
+}
 namespace DlssNr
 {
 void FinishedPictureResetCommandList(ID3D12CommandList* cmd)

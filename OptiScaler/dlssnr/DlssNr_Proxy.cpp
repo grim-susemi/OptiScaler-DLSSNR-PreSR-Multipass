@@ -83,9 +83,6 @@ struct Context::Impl
     ProxyState state;
     DlssNr::GpuLifetime lifetime;
     void RetireState();
-    unsigned int Prepare(ID3D12GraphicsCommandList* cmdList, ID3D12Device* device, unsigned int width,
-                         unsigned int height, const ModelSettings& settings, uint64_t submissionEpoch, bool* ready);
-    void Release();
 };
 
 void Context::Impl::RetireState()
@@ -103,18 +100,14 @@ bool Context::Available()
            NVNGXProxy::D3D12_CreateFeature() != nullptr && NVNGXProxy::D3D12_EvaluateFeature() != nullptr;
 }
 
-void Context::Impl::Release()
-{
-    RetireState();
-    lifetime.Collect();
-}
-
 void Context::RetryAfterFailure() { _impl->RetireState(); }
 
-unsigned int Context::Impl::Prepare(ID3D12GraphicsCommandList* cmdList, ID3D12Device* device, unsigned int width,
+unsigned int Context::Prepare(ID3D12GraphicsCommandList* cmdList, ID3D12Device* device, unsigned int width,
                                     unsigned int height, const ModelSettings& settings, uint64_t submissionEpoch,
                                     bool* ready)
 {
+    auto& state = _impl->state;
+    auto& lifetime = _impl->lifetime;
     *ready = false;
     lifetime.Collect();
     if (state.failed || !cmdList || !device || !width || !height)
@@ -123,7 +116,7 @@ unsigned int Context::Impl::Prepare(ID3D12GraphicsCommandList* cmdList, ID3D12De
         return 0;
     if (state.feature &&
         (state.settings != settings || state.device != device || state.width != width || state.height != height))
-        RetireState();
+        _impl->RetireState();
     if (state.params == nullptr)
     {
         // A dedicated parameter map populated with NGX capabilities. Unlike the deprecated
@@ -170,7 +163,7 @@ unsigned int Context::Impl::Prepare(ID3D12GraphicsCommandList* cmdList, ID3D12De
 
         if (created != NVSDK_NGX_Result_Success || state.feature == nullptr)
         {
-            RetireState();
+            _impl->RetireState();
             state.failed = true;
             LOG_ERROR("DLSS-NR: CreateFeature(18) failed 0x{:X}", (unsigned int) created);
             return (unsigned int) (created == NVSDK_NGX_Result_Success ? NVSDK_NGX_Result_Fail : created);
@@ -251,8 +244,12 @@ unsigned int Context::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Device* devi
     return (unsigned int) result;
 }
 Context::Context() : _impl(std::make_unique<Impl>()) {}
-Context::~Context() { _impl->Release(); }
-void Context::Release() { _impl->Release(); }
+Context::~Context() { Release(); }
+void Context::Release()
+{
+    _impl->RetireState();
+    _impl->lifetime.Collect();
+}
 void Context::Submitted(ID3D12CommandQueue* queue, UINT count, ID3D12CommandList* const* lists)
 {
     _impl->lifetime.Submitted(queue, count, lists);
@@ -260,11 +257,6 @@ void Context::Submitted(ID3D12CommandQueue* queue, UINT count, ID3D12CommandList
 void Context::ResetRecording(ID3D12CommandList* commands) { _impl->lifetime.ResetRecording(commands); }
 bool Context::Idle() { return _impl->lifetime.Idle(); }
 
-unsigned int Context::Prepare(ID3D12GraphicsCommandList* cmdList, ID3D12Device* device, unsigned int width,
-                              unsigned int height, const ModelSettings& settings, uint64_t submissionEpoch, bool* ready)
-{
-    return _impl->Prepare(cmdList, device, width, height, settings, submissionEpoch, ready);
-}
 bool Context::HasFeature() const { return _impl->state.feature != nullptr; }
 bool Context::Ready(uint64_t epoch) const
 {

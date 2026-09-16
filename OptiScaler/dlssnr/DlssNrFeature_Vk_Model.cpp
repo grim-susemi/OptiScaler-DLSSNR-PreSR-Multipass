@@ -16,17 +16,8 @@ bool ModelVk::Impl::CreateImage(ImageVk& img, uint32_t width, uint32_t height, V
 
 void ModelVk::Impl::Transition(VkCommandBuffer cmd, ImageVk& img, VkImageLayout to)
 {
-    if (img.info.Image == VK_NULL_HANDLE || img.layout == to)
+    if (img.layout == to)
         return;
-
-    VkImageMemoryBarrier barrier {};
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.oldLayout = img.layout;
-    barrier.newLayout = to;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = img.info.Image;
-    barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
     const auto access = [](VkImageLayout layout) -> VkAccessFlags
     {
         switch (layout)
@@ -43,13 +34,7 @@ void ModelVk::Impl::Transition(VkCommandBuffer cmd, ImageVk& img, VkImageLayout 
             return VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
         }
     };
-    barrier.srcAccessMask = access(img.layout);
-    barrier.dstAccessMask = access(to);
-
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr,
-                         0, nullptr, 1, &barrier);
-
-    img.layout = to;
+    img.Transition(cmd, to, access(img.layout), access(to));
 }
 
 bool ModelVk::Impl::Fail(const char* why)

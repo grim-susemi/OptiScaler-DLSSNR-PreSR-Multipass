@@ -28,7 +28,6 @@ class Context
     // The owning pipeline releases the chain before changing its device, size or placement.
     unsigned int Prepare(ID3D12GraphicsCommandList* cmdList, ID3D12Device* device, unsigned int width,
                          unsigned int height, const ModelSettings& settings, uint64_t submissionEpoch, bool* ready);
-    bool SettingsChanged(const ModelSettings& settings) const;
     void Collect();
 
     // Prepare must report ready first; the caller supplies validated, shader-readable inputs.

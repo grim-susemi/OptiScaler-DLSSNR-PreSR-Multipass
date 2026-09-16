@@ -177,10 +177,6 @@ void Context::Submitted(ID3D12CommandQueue* queue, UINT count, ID3D12CommandList
 void Context::ResetRecording(ID3D12CommandList* commands) { _impl->lifetime.ResetRecording(commands); }
 bool Context::Idle() { return _impl->lifetime.Idle(); }
 
-bool Context::SettingsChanged(const ModelSettings& settings) const
-{
-    return _impl->state.feature && _impl->state.settings != settings;
-}
 void Context::Collect() { _impl->lifetime.Collect(); }
 
 } // namespace Proxy

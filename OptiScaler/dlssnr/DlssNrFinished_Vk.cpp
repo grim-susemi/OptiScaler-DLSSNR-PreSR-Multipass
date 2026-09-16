@@ -34,27 +34,6 @@ void Say(const char* message)
         LOG_INFO("DLSS-NR Vulkan finished picture: {}", message);
     }
 }
-void Transition(VkCommandBuffer cmd, VkImage image, VkImageLayout from, VkImageLayout to)
-{
-    VkImageMemoryBarrier b { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
-    b.oldLayout = from;
-    b.newLayout = to;
-    b.image = image;
-    b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-    b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.srcAccessMask = from == VK_IMAGE_LAYOUT_UNDEFINED || from == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
-                          ? 0
-                          : VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
-    b.dstAccessMask =
-        to == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR ? 0 : VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0,
-                         nullptr, 1, &b);
-}
-void Transition(VkCommandBuffer cmd, ImageVk& image, VkImageLayout to)
-{
-    Transition(cmd, image.info.Image, image.layout, to);
-    image.layout = to;
-}
 void Blit(VkCommandBuffer cmd, VkImage from, VkImage to, VkExtent2D size)
 {
     VkImageBlit region {};
@@ -193,7 +172,7 @@ struct FinishedVk::Impl
             return;
         auto copy = [&](const VkImageInfo& source, ImageVk& dest, bool readWrite)
         {
-            Transition(cmd, dest, VK_IMAGE_LAYOUT_GENERAL);
+            dest.Transition(cmd, VK_IMAGE_LAYOUT_GENERAL);
             DlssNrConstants c {};
             c.Mode = DlssNrMode_Downsample;
             c.Width = source.Width;
@@ -284,22 +263,22 @@ struct FinishedVk::Impl
         bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         if (vkBeginCommandBuffer(s.cmd, &bi) != VK_SUCCESS)
             return false;
-        Transition(s.cmd, screen.images[index], VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-        Transition(s.cmd, s.input, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        TransitionImage(s.cmd, screen.images[index], VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        s.input.Transition(s.cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         Blit(s.cmd, screen.images[index], s.input.info.Image, screen.size);
-        Transition(s.cmd, s.input, VK_IMAGE_LAYOUT_GENERAL);
-        Transition(s.cmd, s.output, VK_IMAGE_LAYOUT_GENERAL);
-        Transition(s.cmd, s.depth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        Transition(s.cmd, s.motion, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        s.input.Transition(s.cmd, VK_IMAGE_LAYOUT_GENERAL);
+        s.output.Transition(s.cmd, VK_IMAGE_LAYOUT_GENERAL);
+        s.depth.Transition(s.cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        s.motion.Transition(s.cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         ImageVk* input = &s.input;
         bool colorReady = true;
         if (pq)
         {
-            Transition(s.cmd, s.linear, VK_IMAGE_LAYOUT_GENERAL);
+            s.linear.Transition(s.cmd, VK_IMAGE_LAYOUT_GENERAL);
             DlssNrConstants conversion {};
             conversion.Width = screen.size.width;
             conversion.Height = screen.size.height;
-            Transition(s.cmd, s.input, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            s.input.Transition(s.cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             colorReady = shader.Dispatch(s.cmd, conversion, s.input.info.ImageView,
                             VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, s.linear.info.ImageView, VK_NULL_HANDLE,
                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, true);
@@ -315,8 +294,8 @@ struct FinishedVk::Impl
         ImageVk* result = &s.output;
         if (pq && ran)
         {
-            Transition(s.cmd, s.output, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            Transition(s.cmd, s.encoded, VK_IMAGE_LAYOUT_GENERAL);
+            s.output.Transition(s.cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            s.encoded.Transition(s.cmd, VK_IMAGE_LAYOUT_GENERAL);
             DlssNrConstants conversion {};
             conversion.Mode = 1;
             conversion.Width = screen.size.width;
@@ -330,15 +309,15 @@ struct FinishedVk::Impl
         // The original presentable image is only modified after a successful model evaluation.
         if (ran && colorReady && Config::Instance()->DlssNrApplyModel.value_or_default())
         {
-            Transition(s.cmd, *result, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-            Transition(s.cmd, screen.images[index], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            result->Transition(s.cmd, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            TransitionImage(s.cmd, screen.images[index], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
             Blit(s.cmd, result->info.Image, screen.images[index], screen.size);
-            Transition(s.cmd, screen.images[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            TransitionImage(s.cmd, screen.images[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
         }
         else
-            Transition(s.cmd, screen.images[index], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            TransitionImage(s.cmd, screen.images[index], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
         if (vkEndCommandBuffer(s.cmd) != VK_SUCCESS)
             return false;

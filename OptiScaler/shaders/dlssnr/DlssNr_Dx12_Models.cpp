@@ -21,12 +21,7 @@ bool DlssNr_Dx12::State::PrepareRunModels(ID3D12GraphicsCommandList* cmdList, ID
     const bool placementChanged = nr.width != 0 && (nr.beforeUpscale != frame.BeforeUpscale ||
                                                     nr.rayReconstruction != frame.RayReconstruction);
 
-    // Tuning changes require rebuilding the feature, but not its scratch textures.
-    bool tuningChanged = false;
-    for (unsigned pass = 0; pass < requestedPasses; ++pass)
-        tuningChanged |= nr.models[pass].SettingsChanged(PassSettings(cfg, pass));
-
-    if (formatChanged || resolutionChanged || placementChanged || tuningChanged)
+    if (formatChanged || resolutionChanged || placementChanged)
     {
         // Parked rather than released: with frame generation the GPU can still be several frames
         // deep in work that references all of it.
@@ -35,14 +30,9 @@ bool DlssNr_Dx12::State::PrepareRunModels(ID3D12GraphicsCommandList* cmdList, ID
         nr.reset = true;
         modelRunning = false;
 
-        // Resolution and seam changes invalidate the scratch state. Tuning does not, and throwing
-        // resources away for it would mean a reallocation every time a slider moves.
-        if (formatChanged || resolutionChanged || placementChanged)
-        {
-            for (auto** resource : { &nr.output, &nr.passScratch, &nr.passClamp, &nr.colorCopy, &nr.hdrCopy,
-                                     &nr.colorSmall, &nr.outputNative, &nr.activeColor })
-                ParkNrResource(*resource);
-        }
+        for (auto** resource : { &nr.output, &nr.passScratch, &nr.passClamp, &nr.colorCopy, &nr.hdrCopy,
+                                 &nr.colorSmall, &nr.outputNative, &nr.activeColor })
+            ParkNrResource(*resource);
     }
 
     nr.workWidth = workWidth;
@@ -69,7 +59,13 @@ bool DlssNr_Dx12::State::PrepareRunModels(ID3D12GraphicsCommandList* cmdList, ID
             return false;
         }
         if (!ready)
+        {
+            // Context::Prepare rebuilds only the changed pass. Reset the whole chain's history
+            // when its replacement becomes ready, without recreating unchanged model weights.
+            nr.reset = true;
+            modelRunning = false;
             return false;
+        }
     }
 
     const auto ensure = [&](ID3D12Resource*& resource, unsigned w, unsigned h)

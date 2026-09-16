@@ -46,12 +46,13 @@ auto DlssNr_Dx12::State::DeferredSrContext::Float(NVSDK_NGX_Parameter* p, const 
 
 auto DlssNr_Dx12::State::DeferredSrContext::Allocate(Generation& g) -> bool
 {
-    g.edited = owner.CreateScratch(g.device, g.inputFormat, g.w, g.h);
-    g.residualInput = owner.CreateScratch(g.device, DXGI_FORMAT_R16G16B16A16_FLOAT, g.w, g.h);
-    g.residualOutput = owner.CreateScratch(g.device, DXGI_FORMAT_R16G16B16A16_FLOAT, g.outW, g.outH);
-    g.clean = owner.CreateScratch(g.device, g.outputFormat, g.outW, g.outH);
-    g.composed = owner.CreateScratch(g.device, g.outputFormat, g.outW, g.outH);
-    g.exposure = owner.CreateScratch(g.device, DXGI_FORMAT_R32_FLOAT, 1, 1);
+    auto* device = g.device.Get();
+    g.edited = owner.CreateScratch(device, g.inputFormat, g.w, g.h);
+    g.residualInput = owner.CreateScratch(device, DXGI_FORMAT_R16G16B16A16_FLOAT, g.w, g.h);
+    g.residualOutput = owner.CreateScratch(device, DXGI_FORMAT_R16G16B16A16_FLOAT, g.outW, g.outH);
+    g.clean = owner.CreateScratch(device, g.outputFormat, g.outW, g.outH);
+    g.composed = owner.CreateScratch(device, g.outputFormat, g.outW, g.outH);
+    g.exposure = owner.CreateScratch(device, DXGI_FORMAT_R32_FLOAT, 1, 1);
     if (!g.edited || !g.residualInput || !g.residualOutput || !g.clean || !g.composed || !g.exposure)
         return false;
     if (g.rayReconstruction)
@@ -59,13 +60,13 @@ auto DlssNr_Dx12::State::DeferredSrContext::Allocate(Generation& g) -> bool
         // Signed scene-linear history, before the nonlinear private-upscaler carrier encoding.
         for (auto& history : g.accumulatedEdit)
         {
-            history = owner.CreateScratch(g.device, DXGI_FORMAT_R32G32B32A32_FLOAT, g.w, g.h);
+            history = owner.CreateScratch(device, DXGI_FORMAT_R32G32B32A32_FLOAT, g.w, g.h);
             if (!history) return false;
         }
         LOG_INFO("DLSS-NR: motion-reprojected RR residual accumulation enabled at {}x{} before private upscaling",
                  g.w, g.h);
     }
-    g.codec = std::make_unique<DlssNr_Dx12>("Deferred NR contribution", g.device);
+    g.codec = std::make_unique<DlssNr_Dx12>("Deferred NR contribution", device);
     return g.codec->IsInit();
 }
 
@@ -124,21 +125,17 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
         Say("inactive: unsupported active input/output dimensions");
         return;
     }
-    ID3D12Device* device = nullptr;
+    Microsoft::WRL::ComPtr<ID3D12Device> device;
     if (FAILED(cmd->GetDevice(IID_PPV_ARGS(&device))))
         return;
     auto* ownerQueue = queue ? queue : (ID3D12CommandQueue*) ::State::Instance().currentCommandQueue;
-    ID3D12Device* queueDevice = nullptr;
+    Microsoft::WRL::ComPtr<ID3D12Device> queueDevice;
     if (!ownerQueue || ownerQueue->GetDesc().Type != D3D12_COMMAND_LIST_TYPE_DIRECT ||
         FAILED(ownerQueue->GetDevice(IID_PPV_ARGS(&queueDevice))) || queueDevice != device)
     {
-        if (queueDevice)
-            queueDevice->Release();
-        device->Release();
         Say("waiting for a same-device direct queue identity");
         return;
     }
-    queueDevice->Release();
     unsigned flags = (owner.featureFlags ? owner.featureFlags
                                          : UInt(source, NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags)) &
                      (NVSDK_NGX_DLSS_Feature_Flags_DepthInverted | NVSDK_NGX_DLSS_Feature_Flags_MVLowRes |
@@ -155,7 +152,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
                     (privateRr && (current->frame.rr.roughnessMode != rrInputs.roughnessMode ||
                                    current->frame.rr.hardwareDepth != rrInputs.hardwareDepth)) ||
                     current->finishedPicture != cfg.DlssNrFinishedPicture.value_or_default() ||
-                    current->backend != backend || current->device != device || current->queue != ownerQueue ||
+                    current->backend != backend || current->device != device || current->queue.Get() != ownerQueue ||
                     current->w != active->width ||
                     current->h != active->height || current->outW != outDesc.Width ||
                     current->outH != outDesc.Height || current->inputFormat != inDesc.Format ||
@@ -168,14 +165,12 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
     {
         if (retiredCount >= 4)
         {
-            device->Release();
             Say("waiting for retired GPU work; clean SR frame retained");
             return;
         }
         current = std::make_unique<Generation>();
-        current->device = device; // take the GetDevice reference
+        current->device = device;
         current->queue = ownerQueue;
-        ownerQueue->AddRef();
         current->w = active->width;
         current->h = active->height;
         current->outW = (unsigned) outDesc.Width;
@@ -197,8 +192,6 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
             return;
         }
     }
-    else
-        device->Release();
     auto& g = *current;
     g.frame.rr = rrInputs; // Own matrix values before the game's evaluate can rewrite its parameter table.
     // These guides arrive in the game's NGX readable state. Account for aliases of the basic inputs.
@@ -243,7 +236,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
                  g.privateRr ? "DLSS RR" : DlssNr::PrivateUpscalerName(g.backend),
                  info.width, info.height, info.outputWidth, info.outputHeight, info.quality,
                  info.depthInverted, info.jitteredMotion, info.lowResolutionMotion, info.roughnessMode, info.hardwareDepth);
-        if (!g.upscaler->Init(g.device, cmd, info))
+        if (!g.upscaler->Init(g.device.Get(), cmd, info))
         {
             g.failed = true;
             Say(std::string("private ") + g.upscaler->Name() +

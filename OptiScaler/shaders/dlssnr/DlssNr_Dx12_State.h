@@ -197,8 +197,8 @@ struct DlssNr_Dx12::State
 
         struct Generation
         {
-            ID3D12Device* device = nullptr;
-            ID3D12CommandQueue* queue = nullptr; // identity/reference only; no private submissions
+            Microsoft::WRL::ComPtr<ID3D12Device> device;
+            Microsoft::WRL::ComPtr<ID3D12CommandQueue> queue; // identity/reference only; no private submissions
             unsigned w = 0, h = 0, outW = 0, outH = 0, flags = 0;
             DXGI_FORMAT inputFormat {}, outputFormat {};
             ID3D12Resource *edited = nullptr, *residualInput = nullptr, *residualOutput = nullptr, *clean = nullptr,
@@ -224,10 +224,6 @@ struct DlssNr_Dx12::State
                         r->Release();
                 for (auto* r : accumulatedEdit)
                     if (r) r->Release();
-                if (queue)
-                    queue->Release();
-                if (device)
-                    device->Release();
             }
         };
 

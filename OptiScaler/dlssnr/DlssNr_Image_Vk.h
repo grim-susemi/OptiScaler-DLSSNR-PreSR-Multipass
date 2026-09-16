@@ -4,6 +4,23 @@
 
 namespace DlssNr
 {
+inline void TransitionImage(VkCommandBuffer cmd, VkImage image, VkImageLayout from, VkImageLayout to,
+                            VkAccessFlags sourceAccess = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+                            VkAccessFlags targetAccess = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT)
+{
+    VkImageMemoryBarrier barrier { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+    barrier.oldLayout = from;
+    barrier.newLayout = to;
+    barrier.image = image;
+    barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.srcAccessMask = from == VK_IMAGE_LAYOUT_UNDEFINED || from == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+                                ? 0 : sourceAccess;
+    barrier.dstAccessMask = to == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR ? 0 : targetAccess;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
+                         0, nullptr, 0, nullptr, 1, &barrier);
+}
+
 inline uint32_t FindVkMemoryType(VkPhysicalDevice physical, uint32_t bits, VkMemoryPropertyFlags flags)
 {
     VkPhysicalDeviceMemoryProperties properties {};
@@ -22,6 +39,14 @@ struct ImageVk
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
 
     bool Valid() const { return info.ImageView != VK_NULL_HANDLE; }
+
+    void Transition(VkCommandBuffer cmd, VkImageLayout to,
+                    VkAccessFlags sourceAccess = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+                    VkAccessFlags targetAccess = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT)
+    {
+        TransitionImage(cmd, info.Image, layout, to, sourceAccess, targetAccess);
+        layout = to;
+    }
 
     void Destroy(VkDevice device)
     {

@@ -5,7 +5,6 @@
 #include "SysUtils.h"
 #include <shaders/Shader_Vk.h>
 #include "DlssNr_Common.h"
-#include <dlssnr/DlssNr_Image_Vk.h>
 #include <memory>
 
 namespace DlssNr
@@ -36,11 +35,6 @@ class DlssNr_Vk : public Shader_Vk
     VkDeviceSize _slotStride = 0;   // sizeof(DlssNrConstants), rounded up to the device's alignment
     uint32_t _slot = 0;             // next slot to hand out, wrapping
 
-    // Valid stand-in for unread bindings; allocated lazily.
-    DlssNr::ImageVk _dummy;
-
-    bool CreateDummy(VkCommandBuffer cmdList);
-
     void WriteDescriptors(VkDescriptorSet set, VkDeviceSize constantOffset, VkImageView source, VkImageView model,
                           VkImageView original, VkImageView motion, VkImageView target, VkImageView keep,
                           VkImageLayout sourceLayout, VkImageLayout motionLayout);
@@ -59,8 +53,8 @@ class DlssNr_Vk : public Shader_Vk
 
     // The caller supplies layouts for borrowed images. Unused views receive stand-ins.
     // Reuse immutableSlot only for identical bindings/constants; initialize it to UINT32_MAX.
-    bool Dispatch(VkCommandBuffer InCmdList, const DlssNrConstants& InConstants, uint32_t InThreadsX,
-                  uint32_t InThreadsY, VkImageView InSource, VkImageView InModel, VkImageView InOriginal,
+    bool Dispatch(VkCommandBuffer InCmdList, const DlssNrConstants& InConstants,
+                  VkImageView InSource, VkImageView InModel, VkImageView InOriginal,
                   VkImageView InMotion, VkImageView InTarget, VkImageView InKeep,
                   VkImageLayout InSourceLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                   VkImageLayout InMotionLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, bool finishedColor = false,

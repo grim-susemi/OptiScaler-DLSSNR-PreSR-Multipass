@@ -1,27 +1,10 @@
 #include "pch.h"
 
 #include "DlssNrFeature_Vk_Internal.h"
-#include "DlssNrFeature_Dx12.h"
-#include "DlssNr_Status.h"
 #include "DlssNr_Placement.h"
 #include "DlssNrPipeline_Vk.h"
-#include <nvsdk_ngx_vk.h>
-#include "PassProfiles.h"
-
-#include <Config.h>
-#include <State.h>
-#include <proxies/NVNGX_Proxy.h>
-
-#include <shaders/dlssnr/DlssNr_Vk.h>
-#include <shaders/dlssnr/DlssNr_Guides.h>
-#include <shaders/output_scaling/OS_Vk.h>
-
 #include <algorithm>
 #include <cmath>
-#include <cstring>
-#include <memory>
-#include <mutex>
-#include <string>
 
 namespace DlssNr
 {
@@ -92,20 +75,16 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     if (state.failed)
         return false;
 
-    auto colourResource = WrapImage(colourInfo, false);
     auto depthResource = WrapImage(depthInfo, frame.DepthReadWrite);
     auto motionResource = WrapImage(motionInfo, frame.MotionReadWrite);
-    auto* colour = &colourResource;
-    auto* depth = &depthResource;
-    auto* motion = &motionResource;
 
-    if (colour->Resource.ImageViewInfo.ImageView == VK_NULL_HANDLE ||
-        depth->Resource.ImageViewInfo.ImageView == VK_NULL_HANDLE ||
-        motion->Resource.ImageViewInfo.ImageView == VK_NULL_HANDLE)
+    if (colourInfo.ImageView == VK_NULL_HANDLE ||
+        depthInfo.ImageView == VK_NULL_HANDLE ||
+        motionInfo.ImageView == VK_NULL_HANDLE)
         return false;
 
-    uint32_t width = colour->Resource.ImageViewInfo.Width;
-    uint32_t height = colour->Resource.ImageViewInfo.Height;
+    uint32_t width = colourInfo.Width;
+    uint32_t height = colourInfo.Height;
     const auto renderWidth = frame.RenderSubrectWidth, renderHeight = frame.RenderSubrectHeight;
     const auto baseX = frame.ColorSubrectBaseX, baseY = frame.ColorSubrectBaseY;
     if (beforeSr)
@@ -125,8 +104,8 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     const auto outputWidth = frame.OutputWidth ? frame.OutputWidth : target.Width;
     const auto outputHeight = frame.OutputHeight ? frame.OutputHeight : target.Height;
     const auto guides =
-        ResolveGuideRegions({ depth->Resource.ImageViewInfo.Width, depth->Resource.ImageViewInfo.Height },
-                            { motion->Resource.ImageViewInfo.Width, motion->Resource.ImageViewInfo.Height },
+        ResolveGuideRegions({ depthInfo.Width, depthInfo.Height },
+                            { motionInfo.Width, motionInfo.Height },
                             { renderWidth, renderHeight }, { outputWidth, outputHeight },
                             frame.MotionVectorsLowResolution, depthX, depthY, motionX, motionY);
     if (!guides.depth.valid() || !guides.motion.valid())
@@ -172,7 +151,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
 
     // Both have to agree. A game can set the HDR flag on a buffer that cannot hold open-ended light,
     // and encoding an already tone-mapped frame a second time looks washed out and banded.
-    const bool linearHdr = gameSaysHdr && FormatCanHoldLinearHdr(colour->Resource.ImageViewInfo.Format);
+    const bool linearHdr = gameSaysHdr && FormatCanHoldLinearHdr(colourInfo.Format);
 
     float whitePoint = cfg.DlssNrWhitePointScale.value_or_default();
 
@@ -181,7 +160,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
         saidEncoding = true;
         LOG_INFO("DLSS-NR Vulkan: the game's buffer is {} (flag {}, format {}), depth {}",
                  linearHdr ? "linear HDR" : "already tone-mapped", gameSaysHdr ? "set" : "clear",
-                 (int) colour->Resource.ImageViewInfo.Format, depthInverted ? "inverted" : "normal");
+                 (int) colourInfo.Format, depthInverted ? "inverted" : "normal");
     }
 
     if (frame.WhitePointOverride > 0.0f)
@@ -207,7 +186,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     Transition(cmdBuffer, state.keep, VK_IMAGE_LAYOUT_GENERAL);
 
     // Read the caller's actual input layout; the resolve restores it after writing.
-    if (!state.pass->Dispatch(cmdBuffer, encode, width, height, colour->Resource.ImageViewInfo.ImageView,
+    if (!state.pass->Dispatch(cmdBuffer, encode, colourInfo.ImageView,
                               VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, state.proxy.info.ImageView,
                               state.keep.info.ImageView, inputLayout))
     {
@@ -278,7 +257,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
             Transition(cmdBuffer, state.proxy, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             Transition(cmdBuffer, state.proxySmall, VK_IMAGE_LAYOUT_GENERAL);
 
-            if (!state.pass->Dispatch(cmdBuffer, down, workWidth, workHeight, state.proxy.info.ImageView, VK_NULL_HANDLE,
+            if (!state.pass->Dispatch(cmdBuffer, down, state.proxy.info.ImageView, VK_NULL_HANDLE,
                                       VK_NULL_HANDLE, VK_NULL_HANDLE, state.proxySmall.info.ImageView, VK_NULL_HANDLE,
                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
             {
@@ -300,7 +279,6 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     mvY *= (float) workHeight / height;
     ImageVk* answer = &state.output;
     ImageVk* input = modelInput;
-    bool clampFailed = false;
     uint32_t clampSlots[2] = { UINT32_MAX, UINT32_MAX };
     NVSDK_NGX_Result evaluated = NVSDK_NGX_Result_Success;
     for (unsigned int pass = 0; pass < passes; ++pass)
@@ -309,7 +287,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
         Transition(cmdBuffer, *answer, VK_IMAGE_LAYOUT_GENERAL);
         auto inputResource = WrapImage(input->info, true);
         auto answerResource = WrapImage(answer->info, true);
-        evaluated = EvaluateModel(cmdBuffer, pass, &inputResource, depth, motion, &answerResource,
+        evaluated = EvaluateModel(cmdBuffer, pass, &inputResource, &depthResource, &motionResource, &answerResource,
                                   workWidth, workHeight, guides, depthInverted, mvX, mvY, cfg);
         if (evaluated != NVSDK_NGX_Result_Success)
             break;
@@ -321,26 +299,26 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
             clamp.Mode = DlssNrMode_ClampProxy;
             clamp.Width = workWidth;
             clamp.Height = workHeight;
-            if (!state.pass->Dispatch(cmdBuffer, clamp, workWidth, workHeight, answer->info.ImageView, VK_NULL_HANDLE,
+            if (!state.pass->Dispatch(cmdBuffer, clamp, answer->info.ImageView, VK_NULL_HANDLE,
                                       VK_NULL_HANDLE, VK_NULL_HANDLE, state.passClamp.info.ImageView, VK_NULL_HANDLE,
                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, false, &clampSlots[pass % 2]))
             {
-                clampFailed = true;
-                break; // Resolve the last valid answer and reset skipped histories next frame.
+                evaluated = NVSDK_NGX_Result_Fail;
+                break;
             }
             input = &state.passClamp;
             answer = answer == &state.output ? &state.scratch : &state.output;
         }
     }
 
-    state.reset = clampFailed;
+    state.reset = evaluated != NVSDK_NGX_Result_Success;
     state.frames++;
 
     if (evaluated != NVSDK_NGX_Result_Success)
     {
         LOG_ERROR("DLSS-NR Vulkan: evaluate returned 0x{:X}", static_cast<unsigned int>(evaluated));
-        Fail("the model refused to evaluate");
+        Fail("the Neural Rendering pass failed");
         return false;
     }
 
@@ -374,7 +352,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     Transition(cmdBuffer, *resolveAnswer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     Transition(cmdBuffer, state.keep, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-    if (!state.pass->Dispatch(cmdBuffer, resolve, width, height, resolveProxy->info.ImageView,
+    if (!state.pass->Dispatch(cmdBuffer, resolve, resolveProxy->info.ImageView,
                               resolveAnswer->info.ImageView, state.keep.info.ImageView, VK_NULL_HANDLE, target.ImageView, VK_NULL_HANDLE,
                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
     {

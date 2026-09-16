@@ -45,9 +45,6 @@ using DlssNr::Barrier;
 struct DlssNr_Dx12::State
 {
 
-    // NGX result names for diagnostics.
-    const char* NgxResultName(unsigned int r);
-
     DlssNr::Detail::ModelStateDx12 nr;
     DlssNr_Dx12& shader;
     struct Enlarger
@@ -76,9 +73,6 @@ struct DlssNr_Dx12::State
     // What the pass costs on the GPU, for the breakdown in the overlay.
     std::unique_ptr<DlssNrGpuTime> gpuTime;
 
-    // Model-only timing separates NGX cost from encoding, copies and composition.
-    std::unique_ptr<DlssNrGpuTime> ngxTime;
-    std::optional<double> lastNgxTime;
     std::optional<double> lastGpuTime;
 
     // Writes matched before/after frames on request, so comparisons stop depending on video.
@@ -342,8 +336,6 @@ struct DlssNr_Dx12::State
     std::set<std::string> seen;
     bool warnedSuper = false;
     unsigned int loggedConfigured = 0;
-    unsigned int loggedEffective = 0;
-    unsigned long long lastSplitLog = 0;
     unsigned lastFinishedMode = 0;
 
     bool modelRunning = false;

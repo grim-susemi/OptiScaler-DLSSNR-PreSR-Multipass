@@ -1,25 +1,8 @@
 #include "pch.h"
 
 #include "DlssNrFeature_Vk_Internal.h"
-#include "DlssNrFeature_Dx12.h"
-#include "DlssNr_Status.h"
-#include <nvsdk_ngx_vk.h>
-#include "PassProfiles.h"
-
-#include <Config.h>
-#include <State.h>
 #include <proxies/NVNGX_Proxy.h>
-
 #include <shaders/dlssnr/DlssNr_Vk.h>
-#include <shaders/dlssnr/DlssNr_Guides.h>
-#include <shaders/output_scaling/OS_Vk.h>
-
-#include <algorithm>
-#include <cmath>
-#include <cstring>
-#include <memory>
-#include <mutex>
-#include <string>
 
 namespace DlssNr
 {

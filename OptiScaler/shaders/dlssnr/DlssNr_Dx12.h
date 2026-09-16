@@ -29,9 +29,6 @@ class DlssNr_Dx12 : public Shader_Dx12, public DlssNr_Common
     static constexpr uint32_t kSrvCount = 5;
     static constexpr uint32_t kUavCount = 2;
 
-    uint32_t _numThreadsX = 8;
-    uint32_t _numThreadsY = 8;
-
     ID3D12PipelineState* _residualPipelineState = nullptr;
     ID3D12PipelineState* _finishedColorPipelineState = nullptr;
 

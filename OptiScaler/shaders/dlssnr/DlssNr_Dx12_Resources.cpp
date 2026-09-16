@@ -147,13 +147,11 @@ auto DlssNr_Dx12::State::ReleaseResources() -> void
 
     for (auto& model : nr.models)
         model.Release();
-    std::fill(std::begin(nr.passCreateFailed), std::end(nr.passCreateFailed), false);
     modelRunning = false;
 
     for (auto** resource : { &nr.output, &nr.passScratch, &nr.passClamp, &nr.colorCopy, &nr.hdrCopy,
                              &nr.activeColor, &nr.colorSmall })
         ParkNrResource(*resource);
-    nr.passScratchFailed = false;
 
     ReleaseSupersamplers();
 
@@ -167,7 +165,5 @@ auto DlssNr_Dx12::State::ReleaseResources() -> void
 
     captureFrames.release();
     if (auto* timer = gpuTime.release()) lifetime.Retire([timer] { delete timer; });
-    if (auto* timer = ngxTime.release()) lifetime.Retire([timer] { delete timer; });
-    lastNgxTime.reset();
     lastGpuTime.reset();
 }

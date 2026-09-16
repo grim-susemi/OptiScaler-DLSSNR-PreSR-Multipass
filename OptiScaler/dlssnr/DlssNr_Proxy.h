@@ -41,22 +41,17 @@ class Context
     // Creation records GPU work. A feature becomes ready only in a later submission epoch.
     unsigned int Prepare(ID3D12GraphicsCommandList* cmdList, ID3D12Device* device, unsigned int width,
                          unsigned int height, const ModelSettings& settings, uint64_t submissionEpoch, bool* ready);
-    bool HasFeature() const;
-    bool Ready(uint64_t submissionEpoch) const;
+    bool SettingsChanged(const ModelSettings& settings) const;
     void Collect();
 
-    // Each pass owns its feature, parameter map and temporal history. False evaluated means no output.
-    unsigned int Run(ID3D12GraphicsCommandList* cmdList, ID3D12Device* device, const Frame& frame,
-                     const ModelSettings& settings, uint64_t submissionEpoch, bool* evaluated = nullptr);
-
-    // Retires the current feature and clears the failure latch without immediately freeing GPU work.
-    void RetryAfterFailure();
+    // Prepare must report ready first; the caller supplies validated, shader-readable inputs.
+    unsigned int Evaluate(ID3D12GraphicsCommandList* cmdList, const Frame& frame);
 
     void Submitted(ID3D12CommandQueue* queue, UINT count, ID3D12CommandList* const* lists);
     void ResetRecording(ID3D12CommandList* commands);
     bool Idle();
 
-    // Retires ownership; destruction occurs only after recordings are discarded and GPU work completes.
+    // Retires ownership and clears failures; destruction waits for recordings and GPU work.
     // Unresolved ownership is abandoned if this context is destroyed.
     void Release();
 };

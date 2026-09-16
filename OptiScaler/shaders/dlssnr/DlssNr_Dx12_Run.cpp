@@ -4,12 +4,15 @@
 auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* target, ID3D12Resource* depth, ID3D12Resource* motion,
               const DlssNrFrameInfo& frame, ID3D12CommandQueue* timingQueue) -> bool
 {
-    std::lock_guard<std::recursive_mutex> nrLock(mutex);
     const Config& cfg = *Config::Instance();
 
-    if (nr.failed || cmdList == nullptr || target == nullptr || depth == nullptr || motion == nullptr)
+    // Entry points hold the owner lock and validate command/resource pointers.
+    if (nr.failed)
+        return false;
+    if (!shader.IsInit())
     {
-        ReportSkipOnce(nr.failed ? "it already failed this session" : "a resource was missing");
+        nr.failed = true;
+        nr.reason = "the colour codec would not compile";
         return false;
     }
 
@@ -35,15 +38,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         targetState = to;
     };
 
-    Microsoft::WRL::ComPtr<ID3D12Device> deviceRef;
-
-    if (FAILED(target->GetDevice(IID_PPV_ARGS(&deviceRef))))
-    {
-        ReportSkipOnce("the output texture belongs to no D3D12 device");
-        return false;
-    }
-
-    auto* device = deviceRef.Get();
+    auto* device = shader._device;
     const D3D12_RESOURCE_DESC desc = target->GetDesc();
     const auto active =
         frame.BeforeUpscale
@@ -77,16 +72,6 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     const unsigned int requestedPasses =
         std::clamp(cfg.DlssNrPasses.value_or_default(), 1u,
                    cfg.DlssNrUnlockPasses.value_or_default() ? DlssNr::MaxPassCount : DlssNr::DefaultMaxPassCount);
-    for (auto& model : nr.models)
-        model.Collect();
-    if ((!NVNGXProxy::IsDx12Inited() && !NVNGXProxy::InitDx12(device)) || !DlssNr::Proxy::Context::Available())
-    {
-        nr.failed = true;
-        nr.reason = "the NVIDIA NGX driver does not provide Neural Rendering";
-        LOG_ERROR("DLSS-NR unavailable: {}", nr.reason);
-        return false;
-    }
-
     // Only the model runs at working resolution; source and composition remain at native size.
     float workScale = cfg.DlssNrWorkingScale.value_or_default();
     if (!std::isfinite(workScale))
@@ -95,19 +80,11 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     const auto workWidth = (unsigned int) (width * workScale + 0.5f);
     const auto workHeight = (unsigned int) (height * workScale + 0.5f);
     const bool reduced = workWidth != width || workHeight != height;
-    if (!PrepareRunModels(cmdList, device, frame, desc, { width, height }, { workWidth, workHeight },
-                          workScale, requestedPasses))
+    if (!PrepareRunModels(cmdList, device, frame, desc, { width, height },
+                           { workWidth, workHeight }, workScale, requestedPasses))
         return false;
     // The parameter adapter already combined the HDR flag with the active color format.
     const bool isHdrBuffer = frame.ColourIsLinearHdr;
-
-    if (!shader.IsInit())
-    {
-        nr.failed = true;
-        nr.reason = "the colour codec would not compile";
-        LOG_ERROR("DLSS-NR unavailable: {}", nr.reason);
-        return false;
-    }
 
     // Advance capture scheduling only once the codec and models are ready.
     ++frames;
@@ -126,9 +103,6 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     ResTrack_Dx12::HookLateNrQueue(device);
     if (gpuTime == nullptr)
         gpuTime = std::make_unique<DlssNrGpuTime>(device);
-
-    if (ngxTime == nullptr)
-        ngxTime = std::make_unique<DlssNrGpuTime>(device);
 
     gpuTime->Start(cmdList);
 
@@ -255,30 +229,13 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     }
 
     // The vectors were scaled to full-frame pixels; the image the model reprojects is the working size.
-    const float mvToWorkX = width != 0 ? (float) workWidth / (float) width : 1.0f;
-    const float mvToWorkY = height != 0 ? (float) workHeight / (float) height : 1.0f;
+    const float mvToWorkX = (float) workWidth / width;
+    const float mvToWorkY = (float) workHeight / height;
 
-    ngxTime->Start(cmdList);
-
-    // Count only a contiguous set of ready, separate feature histories. A failed extra creation never
-    // falls back to reusing the main feature: that tells one temporal model several frames elapsed in
-    // one game frame and makes its history fight the later layers.
-    unsigned int effectivePasses = 1;
-    if (nr.passScratch != nullptr)
-    {
-        for (unsigned int pass = 1; pass < requestedPasses; ++pass)
-        {
-            if (!nr.models[pass].Ready(frame.SubmissionEpoch))
-                break;
-            ++effectivePasses;
-        }
-    }
-
-    if (loggedConfigured != requestedPasses || loggedEffective != effectivePasses)
+    if (loggedConfigured != requestedPasses)
     {
         loggedConfigured = requestedPasses;
-        loggedEffective = effectivePasses;
-        LOG_INFO("DLSS-NR model passes: configured {}, effective {}", requestedPasses, effectivePasses);
+        LOG_INFO("DLSS-NR model passes: {}", requestedPasses);
     }
 
     // Keep the encoded base immutable; ping-pong model outputs and compose the final delta once.
@@ -288,7 +245,6 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     bool outputReadable = false;
     bool scratchReadable = false;
     bool clampReadable = false;
-    bool clampFailed = false;
     uint32_t clampSlots[2] = { UINT32_MAX, UINT32_MAX };
 
     const auto SetModelReadable = [&](ID3D12Resource* resource, bool next)
@@ -318,22 +274,20 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     modelFrame.mvScaleX = frame.MvScaleX * mvToWorkX;
     modelFrame.mvScaleY = frame.MvScaleY * mvToWorkY;
 
-    for (unsigned int pass = 0; pass < effectivePasses && result == NVSDK_NGX_Result_Success; ++pass)
+    for (unsigned int pass = 0; pass < requestedPasses; ++pass)
     {
         SetModelReadable(passOutput, false);
-        bool evaluated = false;
         modelFrame.color = passInput;
         modelFrame.output = passOutput;
-        result = static_cast<int>(nr.models[pass].Run(cmdList, device, modelFrame, PassSettings(cfg, pass),
-                                                     frame.SubmissionEpoch, &evaluated));
-        modelRunning = evaluated && result == NVSDK_NGX_Result_Success;
-        if (!evaluated || result != NVSDK_NGX_Result_Success)
+        result = nr.models[pass].Evaluate(cmdList, modelFrame);
+        modelRunning = result == NVSDK_NGX_Result_Success;
+        if (!modelRunning)
             break;
 
         finalAnswer = passOutput;
         SetModelReadable(finalAnswer, true);
 
-        if (pass + 1 < effectivePasses)
+        if (pass + 1 < requestedPasses)
         {
             SetModelReadable(nr.passClamp, false);
             DlssNrConstants clamp {};
@@ -343,9 +297,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
             if (!shader.DispatchPass(cmdList, clamp, finalAnswer, nullptr, nullptr, nullptr, nr.passClamp,
                                      nullptr, &clampSlots[pass % 2]))
             {
-                // Keep this frame's last valid answer; later histories skipped a frame.
-                clampFailed = true;
-                effectivePasses = pass + 1;
+                result = NVSDK_NGX_Result_Fail;
                 break;
             }
             SetModelReadable(nr.passClamp, true);
@@ -354,9 +306,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         }
     }
 
-    ngxTime->End(cmdList);
-
-    nr.reset = clampFailed || finalAnswer == nullptr;
+    nr.reset = result != NVSDK_NGX_Result_Success;
 
     if (result == NVSDK_NGX_Result_Success && finalAnswer != nullptr)
     {
@@ -452,10 +402,9 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     else if (result != NVSDK_NGX_Result_Success)
     {
         nr.failed = true;
-        nr.reason = "the model refused to run";
+        nr.reason = "the Neural Rendering pass failed";
 
-        LOG_ERROR("DLSS-NR evaluate returned 0x{:X} ({}); use Retry to recreate the model", (uint32_t) result,
-                  NgxResultName((unsigned int) result));
+        LOG_ERROR("DLSS-NR evaluate returned 0x{:X}; use Retry to recreate the model", (uint32_t) result);
     }
 
     // Restore all intermediate surfaces to the UAV state expected by the next frame.

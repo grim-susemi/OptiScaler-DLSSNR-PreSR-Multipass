@@ -21,8 +21,7 @@ auto DlssNr_Dx12::State::ConsumeControls() -> void
     if (requested.retryGeneration != controls.retryGeneration)
     {
         for (auto& model : nr.models)
-            model.RetryAfterFailure();
-        std::fill(std::begin(nr.passCreateFailed), std::end(nr.passCreateFailed), false);
+            model.Release();
         modelRunning = false;
         ReleaseEnlarger();
         enlargementStatus.clear();
@@ -50,15 +49,4 @@ void DlssNr_Dx12::State::EndGpuTiming(ID3D12GraphicsCommandList* cmdList)
     gpuTime->End(cmdList);
     if (auto ms = gpuTime->ReadGpuTime())
         lastGpuTime = ms;
-    if (auto ngx = ngxTime->ReadGpuTime())
-        lastNgxTime = ngx;
-
-    if (lastGpuTime && lastNgxTime && frames - lastSplitLog > 600)
-    {
-        lastSplitLog = frames;
-        const double total = *lastGpuTime, ngx = *lastNgxTime;
-        LOG_INFO("DLSS-NR elapsed: {:.2f} ms total, {:.2f} ms model, {:.2f} ms surrounding work ({:.0f}%; "
-                 "intervals may include other GPU work)",
-                 total, ngx, total - ngx, total > 0.0 ? 100.0 * (total - ngx) / total : 0.0);
-    }
 }

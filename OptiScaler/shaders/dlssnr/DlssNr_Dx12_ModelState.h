@@ -10,7 +10,6 @@ struct ModelStateDx12
 {
     // Each model pass owns its NGX feature, parameters and temporal history.
     DlssNr::Proxy::Context models[DlssNr::MaxPassCount];
-    bool passCreateFailed[DlssNr::MaxPassCount] = {};
 
     // The model cannot read and write one resource, so the frame is staged through these.
     ID3D12Resource* colorCopy = nullptr;
@@ -19,7 +18,6 @@ struct ModelStateDx12
     // The second half of the model-output ping-pong. The base proxy stays immutable: pass 0 writes
     // output (A), pass 1 writes this (B), and pass 2 writes A again. Only the final answer is composed.
     ID3D12Resource* passScratch = nullptr;
-    bool passScratchFailed = false;
     ID3D12Resource* passClamp = nullptr; // bounded input for the next model pass
 
     // The frame as the upscaler wrote it. The resolve adds the model's edit to this rather than
@@ -60,9 +58,6 @@ struct ModelStateDx12
     bool beforeUpscale = false;
     bool rayReconstruction = false;
     bool reset = true;
-
-    // The preset, style and strengths each live feature was created with.
-    ModelSettings builtSettings[DlssNr::MaxPassCount] {};
 
     // Latch failures until an explicit retry rather than recording failing GPU work every frame.
     bool failed = false;

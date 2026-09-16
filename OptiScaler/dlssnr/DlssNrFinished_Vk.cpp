@@ -198,7 +198,7 @@ struct FinishedVk::Impl
             c.Mode = DlssNrMode_Downsample;
             c.Width = source.Width;
             c.Height = source.Height;
-            return shader.Dispatch(cmd, c, c.Width, c.Height, source.ImageView, VK_NULL_HANDLE, VK_NULL_HANDLE,
+            return shader.Dispatch(cmd, c, source.ImageView, VK_NULL_HANDLE, VK_NULL_HANDLE,
                                    VK_NULL_HANDLE, dest.info.ImageView, VK_NULL_HANDLE,
                                    readWrite ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         };
@@ -300,7 +300,7 @@ struct FinishedVk::Impl
             conversion.Width = screen.size.width;
             conversion.Height = screen.size.height;
             Transition(s.cmd, s.input, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            colorReady = shader.Dispatch(s.cmd, conversion, conversion.Width, conversion.Height, s.input.info.ImageView,
+            colorReady = shader.Dispatch(s.cmd, conversion, s.input.info.ImageView,
                             VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, s.linear.info.ImageView, VK_NULL_HANDLE,
                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, true);
             input = &s.linear;
@@ -321,7 +321,7 @@ struct FinishedVk::Impl
             conversion.Mode = 1;
             conversion.Width = screen.size.width;
             conversion.Height = screen.size.height;
-            colorReady = shader.Dispatch(s.cmd, conversion, conversion.Width, conversion.Height, s.output.info.ImageView,
+            colorReady = shader.Dispatch(s.cmd, conversion, s.output.info.ImageView,
                             VK_NULL_HANDLE, s.input.info.ImageView, VK_NULL_HANDLE, s.encoded.info.ImageView,
                             VK_NULL_HANDLE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, true);

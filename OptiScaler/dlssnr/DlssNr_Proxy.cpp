@@ -87,8 +87,6 @@ bool Context::Available()
            NVNGXProxy::D3D12_CreateFeature() != nullptr && NVNGXProxy::D3D12_EvaluateFeature() != nullptr;
 }
 
-void Context::RetryAfterFailure() { _impl->RetireState(); }
-
 unsigned int Context::Prepare(ID3D12GraphicsCommandList* cmdList, ID3D12Device* device, unsigned int width,
                                     unsigned int height, const ModelSettings& settings, uint64_t submissionEpoch,
                                     bool* ready)
@@ -170,22 +168,10 @@ unsigned int Context::Prepare(ID3D12GraphicsCommandList* cmdList, ID3D12Device* 
     return (unsigned int) NVSDK_NGX_Result_Success;
 }
 
-unsigned int Context::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Device* device,
-                          const Frame& frame, const ModelSettings& settings, uint64_t submissionEpoch,
-                          bool* evaluated)
+unsigned int Context::Evaluate(ID3D12GraphicsCommandList* cmdList, const Frame& frame)
 {
     auto& state = _impl->state;
     auto& lifetime = _impl->lifetime;
-    if (evaluated)
-        *evaluated = false;
-    if (!frame.color || !frame.depth || !frame.motion || !frame.output ||
-        !frame.guides.depth.valid() || !frame.guides.motion.valid())
-        return 0;
-    bool ready = false;
-    const auto prepared = Prepare(cmdList, device, frame.size.width, frame.size.height, settings, submissionEpoch, &ready);
-    if (prepared != NVSDK_NGX_Result_Success || !ready)
-        return prepared;
-
     NVSDK_NGX_Parameter* params = state.params;
 
     params->Set("DLSSNR.Color", frame.color);
@@ -209,23 +195,14 @@ unsigned int Context::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Device* devi
     params->Set("DLSSNR.MVecScaleX", frame.mvScaleX);
     params->Set("DLSSNR.MVecScaleY", frame.mvScaleY);
 
-    DlssNr::SetModelTuning(params, settings);
+    DlssNr::SetModelTuning(params, state.settings);
 
     lifetime.Record(cmdList);
     const auto result = state.compatibility ? state.compatibility->Evaluate(cmdList, state.feature, params)
                                            : NVNGXProxy::D3D12_EvaluateFeature()(cmdList, state.feature, params, nullptr);
 
-    if (result == NVSDK_NGX_Result_Success)
-    {
-        state.reset = false;
-        if (evaluated != nullptr)
-            *evaluated = true;
-    }
-    else
-    {
-        state.failed = true;
-    }
-
+    state.failed = result != NVSDK_NGX_Result_Success;
+    state.reset = state.failed;
     return (unsigned int) result;
 }
 Context::Context() : _impl(std::make_unique<Impl>()) {}
@@ -242,10 +219,9 @@ void Context::Submitted(ID3D12CommandQueue* queue, UINT count, ID3D12CommandList
 void Context::ResetRecording(ID3D12CommandList* commands) { _impl->lifetime.ResetRecording(commands); }
 bool Context::Idle() { return _impl->lifetime.Idle(); }
 
-bool Context::HasFeature() const { return _impl->state.feature != nullptr; }
-bool Context::Ready(uint64_t epoch) const
+bool Context::SettingsChanged(const ModelSettings& settings) const
 {
-    return HasFeature() && !_impl->state.failed && epoch != _impl->state.creationEpoch;
+    return _impl->state.feature && _impl->state.settings != settings;
 }
 void Context::Collect() { _impl->lifetime.Collect(); }
 

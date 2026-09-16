@@ -16,7 +16,6 @@ DlssNr_Vk::DlssNr_Vk(std::string InName, VkDevice InDevice, VkPhysicalDevice InP
     if (InDevice == VK_NULL_HANDLE || InPhysicalDevice == VK_NULL_HANDLE)
     {
         LOG_ERROR("DLSS-NR Vulkan pass: no device");
-        _init = false;
         return;
     }
 
@@ -40,14 +39,12 @@ DlssNr_Vk::DlssNr_Vk(std::string InName, VkDevice InDevice, VkPhysicalDevice InP
                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
     {
         LOG_ERROR("DLSS-NR Vulkan pass: could not allocate the constant ring");
-        _init = false;
         return;
     }
 
     if (vkMapMemory(_device, _constantBufferMemory, 0, _slotStride * kSlots, 0, &_mappedConstantBuffer) != VK_SUCCESS)
     {
         LOG_ERROR("DLSS-NR Vulkan pass: could not map the constant ring");
-        _init = false;
         return;
     }
 
@@ -82,19 +79,11 @@ DlssNr_Vk::DlssNr_Vk(std::string InName, VkDevice InDevice, VkPhysicalDevice InP
     CreateDescriptorSets(_descriptorSetLayout, _descriptorPool, _descriptorSets);
     _maxFramesInFlight = kFramesInFlight;
 
-    if (_descriptorSets.size() < kSlots)
-    {
-        LOG_ERROR("DLSS-NR Vulkan pass: expected {} descriptor sets, got {}", kSlots, _descriptorSets.size());
-        _init = false;
-        return;
-    }
-
     std::vector<char> shaderCode(dlssnr_spv, dlssnr_spv + sizeof(dlssnr_spv));
 
     if (!CreateComputePipeline(_device, _pipelineLayout, &_pipeline, shaderCode))
     {
         LOG_ERROR("DLSS-NR Vulkan pass: could not create the compute pipeline");
-        _init = false;
         return;
     }
 
@@ -109,22 +98,6 @@ DlssNr_Vk::~DlssNr_Vk()
     _finished.reset();
     _model.reset();
     if (_finishedPipeline) vkDestroyPipeline(_device, _finishedPipeline, nullptr);
-    _dummy.Destroy(_device);
-}
-
-// All declared descriptors must be valid, even when the selected mode does not read them.
-bool DlssNr_Vk::CreateDummy(VkCommandBuffer cmdList)
-{
-    if (_dummy.layout == VK_IMAGE_LAYOUT_GENERAL)
-        return true;
-    if (!_dummy.Ensure(_device, _physicalDevice, 1, 1, VK_FORMAT_R16G16B16A16_SFLOAT))
-    {
-        LOG_ERROR("DLSS-NR Vulkan pass: could not allocate the placeholder image");
-        return false;
-    }
-    SetImageLayout(cmdList, _dummy.info.Image, _dummy.layout, VK_IMAGE_LAYOUT_GENERAL, _dummy.info.SubresourceRange);
-    _dummy.layout = VK_IMAGE_LAYOUT_GENERAL;
-    return true;
 }
 
 void DlssNr_Vk::WriteDescriptors(VkDescriptorSet set, VkDeviceSize constantOffset, VkImageView source,
@@ -133,18 +106,15 @@ void DlssNr_Vk::WriteDescriptors(VkDescriptorSet set, VkDeviceSize constantOffse
 {
     VkDescriptorBufferInfo bufferInfo { _constantBuffer, constantOffset, sizeof(DlssNrConstants) };
 
-    // A read slot standing in for nothing is bound in GENERAL, which is the layout the placeholder is
-    // left in. A real read is bound in the layout the caller says its image is in.
+    // Unread bindings use the valid source/target, as on DX12; no placeholder image is needed.
     const auto readInfo = [&](VkImageView v, VkImageLayout layout)
     {
-        return VkDescriptorImageInfo { _textureSampler, v != VK_NULL_HANDLE ? v : _dummy.info.ImageView,
-                                       v != VK_NULL_HANDLE ? layout : VK_IMAGE_LAYOUT_GENERAL };
+        return VkDescriptorImageInfo { _textureSampler, v ? v : source, v ? layout : sourceLayout };
     };
 
     const auto writeInfo = [&](VkImageView v)
     {
-        return VkDescriptorImageInfo { VK_NULL_HANDLE, v != VK_NULL_HANDLE ? v : _dummy.info.ImageView,
-                                       VK_IMAGE_LAYOUT_GENERAL };
+        return VkDescriptorImageInfo { VK_NULL_HANDLE, v ? v : target, VK_IMAGE_LAYOUT_GENERAL };
     };
 
     VkDescriptorImageInfo sourceInfo = readInfo(source, sourceLayout);
@@ -177,21 +147,15 @@ void DlssNr_Vk::WriteDescriptors(VkDescriptorSet set, VkDeviceSize constantOffse
     vkUpdateDescriptorSets(_device, (uint32_t) (sizeof(writes) / sizeof(writes[0])), writes, 0, nullptr);
 }
 
-bool DlssNr_Vk::Dispatch(VkCommandBuffer InCmdList, const DlssNrConstants& InConstants, uint32_t InThreadsX,
-                         uint32_t InThreadsY, VkImageView InSource, VkImageView InModel, VkImageView InOriginal,
+bool DlssNr_Vk::Dispatch(VkCommandBuffer InCmdList, const DlssNrConstants& InConstants,
+                         VkImageView InSource, VkImageView InModel, VkImageView InOriginal,
                          VkImageView InMotion, VkImageView InTarget, VkImageView InKeep, VkImageLayout InSourceLayout,
                          VkImageLayout InMotionLayout, bool finishedColor, uint32_t* immutableSlot)
 {
     if (!CanRender() || InCmdList == VK_NULL_HANDLE || (finishedColor && !_finishedPipeline))
         return false;
 
-    if (InTarget == VK_NULL_HANDLE)
-    {
-        LOG_ERROR("DLSS-NR Vulkan pass: a dispatch with nothing to write");
-        return false;
-    }
-
-    if (!CreateDummy(InCmdList))
+    if (!InSource || !InTarget)
         return false;
 
     const bool reuse = immutableSlot && *immutableSlot != UINT32_MAX;
@@ -213,8 +177,8 @@ bool DlssNr_Vk::Dispatch(VkCommandBuffer InCmdList, const DlssNrConstants& InCon
                             nullptr);
 
     // The shader's thread group is 8x8, the same as the D3D12 path.
-    const uint32_t groupsX = (InThreadsX + 7) / 8;
-    const uint32_t groupsY = (InThreadsY + 7) / 8;
+    const uint32_t groupsX = (InConstants.Width + 7) / 8;
+    const uint32_t groupsY = (InConstants.Height + 7) / 8;
 
     vkCmdDispatch(InCmdList, groupsX, groupsY, 1);
 
@@ -269,7 +233,7 @@ bool DlssNr_Vk::Dispatch(VkCommandBuffer cmd, const VkImageInfo& colour, const V
     copy.Mode = DlssNrMode_Downsample;
     copy.Width = output.Width;
     copy.Height = output.Height;
-    const bool copied = Dispatch(cmd, copy, output.Width, output.Height, colour.ImageView, VK_NULL_HANDLE,
+    const bool copied = Dispatch(cmd, copy, colour.ImageView, VK_NULL_HANDLE,
                                  VK_NULL_HANDLE, VK_NULL_HANDLE, output.ImageView, VK_NULL_HANDLE);
     SetImageLayout(cmd, colour.Image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, inputLayout, colour.SubresourceRange);
     if (!copied)

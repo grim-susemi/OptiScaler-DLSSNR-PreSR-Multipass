@@ -197,8 +197,8 @@ bool DlssNr_Dx12::DispatchCompute(ID3D12GraphicsCommandList* InCmdList, const Dl
 
     // Sized from the constants rather than from a resource, because the pass that shrinks the proxy
     // writes fewer pixels than its source has.
-    const UINT dispatchWidth = (InConstants.Width + _numThreadsX - 1) / _numThreadsX;
-    const UINT dispatchHeight = (InConstants.Height + _numThreadsY - 1) / _numThreadsY;
+    const UINT dispatchWidth = (InConstants.Width + 7) / 8;
+    const UINT dispatchHeight = (InConstants.Height + 7) / 8;
     InCmdList->Dispatch(dispatchWidth, dispatchHeight, 1);
 
     return true;
@@ -399,9 +399,7 @@ bool DlssNr_Dx12::ProcessSeam(ID3D12GraphicsCommandList* cmd, NVSDK_NGX_Paramete
         state.lastFinishedMode = finishedMode;
         state.nr.reset = true;
         if (state.gpuTime) state.gpuTime->ClearLast();
-        if (state.ngxTime) state.ngxTime->ClearLast();
         state.lastGpuTime.reset();
-        state.lastNgxTime.reset();
         if (special)
         {
             state.late.Cancel();

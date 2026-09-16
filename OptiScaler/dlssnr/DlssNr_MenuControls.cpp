@@ -88,13 +88,8 @@ static void DeferredSlider(const char* label, Option* opt, float mn, float mx, f
 
     if (ImGui::IsItemDeactivatedAfterEdit())
     {
-        auto committed = pending.find(id);
-
-        if (committed != pending.end())
-        {
-            *opt = std::clamp(committed->second, mn, mx);
-            pending.erase(committed);
-        }
+        *opt = std::clamp(value, mn, mx);
+        pending.erase(id);
     }
 
     ImGui::SameLine();
@@ -117,26 +112,6 @@ static void DeferredSlider(const char* label, Option* opt, float mn, float mx, f
         HelpMarker("Broad lighting changes. Later passes default to 0.");
     else if (std::strcmp(label, "Skin structure") == 0)
         HelpMarker("Skin detail. -1 follows Local structure.");
-}
-
-// An absent later-pass setting inherits pass 1. The first combo item represents that absence; the
-// remaining items map directly to the model's zero-based profile values.
-static void InheritedProfileCombo(const char* label, CustomOptional<uint32_t, NoDefault>* opt, const char* const* names,
-                                  int nameCount)
-{
-    int selected = 0;
-
-    if (opt->has_value())
-        selected = std::clamp((int) opt->value(), 0, nameCount - 2) + 1;
-
-    if (!ImGui::Combo(label, &selected, names, nameCount))
-        return;
-
-    if (selected == 0)
-        *opt = std::optional<uint32_t> {};
-    else
-        *opt = (uint32_t) (selected - 1);
-
 }
 
 void RenderModel(Config* config)
@@ -210,7 +185,9 @@ void RenderModel(Config* config)
     else
     {
         auto& pass = config->DlssNrPassOverrides[selectedPass - 1];
-        InheritedProfileCombo("Style", &pass.style, inheritedStyles, IM_ARRAYSIZE(inheritedStyles));
+        int style = pass.style.has_value() ? std::clamp((int) pass.style.value(), 0, 2) + 1 : 0;
+        if (ImGui::Combo("Style", &style, inheritedStyles, IM_ARRAYSIZE(inheritedStyles)))
+            pass.style = style ? std::optional<uint32_t>(style - 1) : std::nullopt;
         tuning(pass.intensity, pass.structure, pass.tone, pass.skin, pass.autoMask);
     }
     ImGui::PopID();

@@ -78,13 +78,26 @@ int main()
     bool evaluated = true;
     uint64_t epoch = 0;
     DlssNr::ModelSettings settings { 0, 0, 0.5f, 1.0f, 0.0f, -1.0f, true };
+    const auto evaluate = [&](DlssNr::Proxy::Context& context, const DlssNr::Proxy::Frame& frame,
+                              const DlssNr::ModelSettings& profile)
+    {
+        evaluated = false;
+        bool ready = false;
+        const auto prepared = context.Prepare(&commands, &device, frame.size.width, frame.size.height,
+                                               profile, epoch, &ready);
+        if (prepared != NVSDK_NGX_Result_Success || !ready)
+            return prepared;
+        const auto result = context.Evaluate(&commands, frame);
+        evaluated = result == NVSDK_NGX_Result_Success;
+        return result;
+    };
     auto run = [&](bool advance = true)
     {
         if (advance)
             ++epoch;
         const DlssNr::Proxy::Frame frame { &color, &depth, &motion, &output, { 1920, 1080 },
             { { 12, 24, 1280, 720 }, { 32, 48, 1920, 1080 } }, true, false, 0.5f, -0.25f };
-        return proxy.Run(&commands, &device, frame, settings, epoch, &evaluated);
+        return evaluate(proxy, frame, settings);
     };
     auto value = []<typename T>(const char* key)
     {
@@ -139,13 +152,13 @@ int main()
     assert(run() == (unsigned int) Mock::evaluateResult && !evaluated);
     auto evaluationsBefore = Mock::evaluations;
     assert(run() == 0 && !evaluated && Mock::evaluations == evaluationsBefore);
-    proxy.RetryAfterFailure();
+    proxy.Release();
     Mock::evaluateResult = NVSDK_NGX_Result_Success;
     Mock::createResult = NVSDK_NGX_Result_FAIL_UnableToInitializeFeature;
     assert(run() == (unsigned int) Mock::createResult && !evaluated);
     auto creationsBefore = Mock::creations;
     assert(run() == 0 && Mock::creations == creationsBefore);
-    proxy.RetryAfterFailure();
+    proxy.Release();
     Mock::createResult = NVSDK_NGX_Result_Success;
     assert(run() == NVSDK_NGX_Result_Success && !evaluated);
     assert(run() == NVSDK_NGX_Result_Success && evaluated);
@@ -168,7 +181,8 @@ int main()
         {
             const DlssNr::Proxy::Frame frame { &color, &depth, &motion, &output, { 1280, 720 },
                 { { 0, 0, 1280, 720 }, { 0, 0, 1280, 720 } } };
-            return other.Run(&commands, &device, frame, otherSettings, ++epoch, &evaluated);
+            ++epoch;
+            return evaluate(other, frame, otherSettings);
         };
         assert(runOther() == NVSDK_NGX_Result_Success && !evaluated);
         auto* secondParams = Mock::latest;
@@ -205,13 +219,13 @@ int main()
     // Only the earlier driver initialization rejection tried compatibility loading.
     assert(CompatibilityMock::opens == 1);
     Mock::createResult = NVSDK_NGX_Result_FAIL_UnableToInitializeFeature;
-    proxy.RetryAfterFailure();
+    proxy.Release();
     assert(run() == NVSDK_NGX_Result_FAIL_UnableToInitializeFeature && !evaluated);
     proxy.ResetRecording(&commands);
     assert(CompatibilityMock::opens == 2 && Mock::handles.empty());
 
     CompatibilityMock::available = true;
-    proxy.RetryAfterFailure();
+    proxy.Release();
     assert(run() == NVSDK_NGX_Result_Success && !evaluated);
     proxy.ResetRecording(&commands);
     assert(run() == NVSDK_NGX_Result_Success && evaluated);
@@ -224,7 +238,7 @@ int main()
 
     // Direct creation failures also retain backend ownership until recording is retired.
     CompatibilityMock::createResult = NVSDK_NGX_Result_Fail;
-    proxy.RetryAfterFailure();
+    proxy.Release();
     assert(run() == NVSDK_NGX_Result_Fail && !evaluated);
     assert(CompatibilityMock::destroyed == 1);
     proxy.ResetRecording(&commands);
@@ -232,7 +246,7 @@ int main()
     const auto attempts = CompatibilityMock::opens;
     CompatibilityMock::createResult = NVSDK_NGX_Result_Success;
     Mock::createResult = NVSDK_NGX_Result_Fail;
-    proxy.RetryAfterFailure();
+    proxy.Release();
     assert(run() == NVSDK_NGX_Result_Success && !evaluated);
     proxy.Release();
     proxy.ResetRecording(&commands);

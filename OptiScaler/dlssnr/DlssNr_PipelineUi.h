@@ -83,19 +83,10 @@ inline void DrawTimingBar(double nrMs, double frameMs)
     const double remaining = std::max(frameMs - nrMs, 0.0);
     const bool overlapping = nrMs > frameMs;
     ImGui::TextWrapped("NR %.2f ms  |  Rest of frame ~%.2f ms", nrMs, remaining);
-    const ImVec2 at = ImGui::GetCursorScreenPos();
-    const ImVec2 size(std::max(ImGui::GetContentRegionAvail().x, 1.0f), ImGui::GetFontSize());
-    const float split = size.x * static_cast<float>(nrMs / std::max(frameMs, nrMs));
     const auto text = ImGui::GetStyleColorVec4(ImGuiCol_Text);
-    auto* draw = ImGui::GetWindowDrawList();
-    draw->AddRectFilled(at, ImVec2(at.x + size.x, at.y + size.y), ImGui::GetColorU32(ImGuiCol_FrameBg));
-    if (split > 0.0f)
-        draw->AddRectFilled(at, ImVec2(at.x + split, at.y + size.y),
-                            ImGui::GetColorU32(ImVec4(text.x * 0.20f, text.y * 0.55f, text.z * 0.25f, text.w)));
-    if (split < size.x)
-        draw->AddRectFilled(ImVec2(at.x + split, at.y), ImVec2(at.x + size.x, at.y + size.y),
-                            ImGui::GetColorU32(ImGuiCol_Button));
-    ImGui::Dummy(size);
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(text.x * 0.20f, text.y * 0.55f, text.z * 0.25f, text.w));
+    ImGui::ProgressBar(float(nrMs / std::max(frameMs, nrMs)), ImVec2(-1.0f, ImGui::GetFontSize()), "");
+    ImGui::PopStyleColor();
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("NR GPU time versus frame interval. Work can overlap.");
     ImGui::PushTextWrapPos(0.0f);

@@ -3,6 +3,7 @@
 #include <Util.h>
 #include <algorithm>
 #include <vector>
+#include <map>
 #include <wrl/client.h>
 #include <atomic>
 #include <mutex>
@@ -30,25 +31,6 @@ struct GpuLifetime::Impl
         Microsoft::WRL::ComPtr<ID3D12Fence> fence;
         UINT64 value = 0;
         bool failed = false;
-        ~Timeline()
-        {
-            const auto completed = fence ? fence->GetCompletedValue() : 0;
-            if (failed || completed == UINT64_MAX || completed < value)
-            {
-                fence.Detach();
-                queue.Detach();
-            }
-        }
-    };
-    struct Completion
-    {
-        std::shared_ptr<Timeline> timeline;
-        UINT64 value;
-        bool Complete() const
-        {
-            const auto completed = timeline->fence->GetCompletedValue();
-            return completed != UINT64_MAX && completed >= value;
-        }
     };
     struct Recording
     {
@@ -56,12 +38,15 @@ struct GpuLifetime::Impl
         std::atomic_bool open { true };
         bool signalFailed = false;
         // Only the latest value on each queue is needed, including when the list is replayed.
-        std::vector<Completion> completions;
+        std::map<std::shared_ptr<Timeline>, UINT64> completions;
         bool Complete() const
         {
             // A closed list can be replayed until reset, even after its first execution completes.
-            return !open && !signalFailed &&
-                   std::all_of(completions.begin(), completions.end(), [](const auto& c) { return c.Complete(); });
+            return !open && !signalFailed && std::all_of(completions.begin(), completions.end(), [](const auto& c) {
+                const auto& [timeline, value] = c;
+                const auto completed = timeline->fence->GetCompletedValue();
+                return completed != UINT64_MAX && completed >= value;
+            });
         }
     };
     // Command lists can be released instead of Reset. A private IUnknown notification
@@ -125,8 +110,10 @@ GpuLifetime::GpuLifetime() : impl(std::make_unique<Impl>()) {}
 GpuLifetime::~GpuLifetime()
 {
     Collect();
-    // Pending/unsubmitted, failed-signal and removed-device ownership is intentionally abandoned.
-    // Neither elapsed CPU time nor a new queue signal can prove that a recorded list is finished.
+    // Keep unresolved callbacks and their captures, including runtime/queue ownership.
+    // Destroying a callback without running it can still release objects the GPU needs.
+    if (!impl->recordings.empty())
+        impl.release();
 }
 void GpuLifetime::Record(ID3D12GraphicsCommandList* commands)
 {
@@ -181,13 +168,7 @@ void GpuLifetime::Submitted(ID3D12CommandQueue* queue, UINT count, ID3D12Command
                 use->signalFailed = true;
                 continue;
             }
-            auto& completions = use->completions;
-            auto found = std::find_if(completions.begin(), completions.end(),
-                                     [&](const auto& c) { return c.timeline == timeline; });
-            if (found == completions.end())
-                completions.push_back({ timeline, timeline->value });
-            else
-                found->value = timeline->value;
+            use->completions[timeline] = timeline->value;
         }
     }
     Collect();

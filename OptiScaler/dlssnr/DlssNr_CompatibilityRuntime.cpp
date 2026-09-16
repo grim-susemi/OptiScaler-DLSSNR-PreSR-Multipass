@@ -28,19 +28,22 @@ thread_local HMODULE callerAlias = nullptr;
 // Preserve a loader/overlay's existing IAT wrapper for ordinary path queries.
 std::atomic<decltype(&GetModuleFileNameW)> originalPathW { &GetModuleFileNameW };
 std::atomic<decltype(&GetModuleFileNameA)> originalPathA { &GetModuleFileNameA };
+
+template <typename Char, size_t N> DWORD CopyCallerName(Char* path, DWORD capacity, const Char (&alias)[N])
+{
+    if (!capacity) { SetLastError(ERROR_INSUFFICIENT_BUFFER); return 0; }
+    const DWORD copied = (DWORD)std::min<size_t>(capacity - 1, N - 1);
+    memcpy(path, alias, copied * sizeof(Char));
+    path[copied] = 0;
+    if (capacity < N) { SetLastError(ERROR_INSUFFICIENT_BUFFER); return capacity; }
+    return copied;
+}
+
 DWORD WINAPI CallerPath(HMODULE queried, LPWSTR path, DWORD capacity)
 {
     const auto original = originalPathW.load();
     if (callerAlias && queried == callerAlias)
-    {
-        constexpr wchar_t alias[] = L"nvngx.dll";
-        if (!capacity) { SetLastError(ERROR_INSUFFICIENT_BUFFER); return 0; }
-        const DWORD copied = (DWORD)std::min<size_t>(capacity - 1, std::size(alias) - 1);
-        memcpy(path, alias, copied * sizeof(wchar_t));
-        path[copied] = 0;
-        if (capacity < std::size(alias)) { SetLastError(ERROR_INSUFFICIENT_BUFFER); return capacity; }
-        return copied;
-    }
+        return CopyCallerName(path, capacity, L"nvngx.dll");
     return original(queried, path, capacity);
 }
 
@@ -48,15 +51,7 @@ DWORD WINAPI CallerPathA(HMODULE queried, LPSTR path, DWORD capacity)
 {
     const auto original = originalPathA.load();
     if (callerAlias && queried == callerAlias)
-    {
-        constexpr char alias[] = "nvngx.dll";
-        if (!capacity) { SetLastError(ERROR_INSUFFICIENT_BUFFER); return 0; }
-        const DWORD copied = (DWORD)std::min<size_t>(capacity - 1, std::size(alias) - 1);
-        memcpy(path, alias, copied);
-        path[copied] = 0;
-        if (capacity < std::size(alias)) { SetLastError(ERROR_INSUFFICIENT_BUFFER); return capacity; }
-        return copied;
-    }
+        return CopyCallerName(path, capacity, "nvngx.dll");
     return original(queried, path, capacity);
 }
 

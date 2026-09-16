@@ -85,9 +85,9 @@ struct DlssNr_Dx12::State
     unsigned retiredEnlargers = 0;
     std::string enlargementStatus;
     void ReleaseEnlarger();
-    ID3D12Resource* EnlargeMatchedResidual(ID3D12GraphicsCommandList* cmd, ID3D12Device* device,
-        ID3D12Resource* proxy, ID3D12Resource* answer, ID3D12Resource* depth, ID3D12Resource* motion,
-        const DlssNrFrameInfo& frame, const DlssNrConstants& resolve, bool reset, ID3D12CommandQueue* queue);
+    ID3D12Resource* EnlargeMatchedResidual(ID3D12GraphicsCommandList* cmd, ID3D12Resource* proxy,
+        const DlssNr::Proxy::Frame& modelFrame, const DlssNrFrameInfo& frame,
+        const DlssNrConstants& resolve, ID3D12CommandQueue* queue);
 
     // What the pass costs on the GPU, for the breakdown in the overlay.
     std::unique_ptr<DlssNrGpuTime> gpuTime;

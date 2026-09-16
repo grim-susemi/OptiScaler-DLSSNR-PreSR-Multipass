@@ -323,6 +323,32 @@ try
         life.ResetRecording(commands.Get());
         expect(generationsReleased == 2 && life.Idle(), "shared generations did not retire");
     }
+    {
+        // Abandoned retirements may own a compatibility runtime as well as raw GPU handles.
+        // Destroying the tracker must retain those captures when completion is still unknown.
+        ComPtr<ID3D12CommandAllocator> localAllocator;
+        ComPtr<ID3D12GraphicsCommandList> abandoned;
+        check(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&localAllocator)));
+        check(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, localAllocator.Get(), nullptr,
+                                        IID_PPV_ARGS(&abandoned)));
+        check(abandoned->Close());
+        std::weak_ptr<int> captured;
+        {
+            auto owner = std::make_shared<int>(1);
+            captured = owner;
+            DlssNr::GpuLifetime life;
+            life.Record(abandoned.Get());
+            life.Retire([owner] {});
+        }
+        expect(!captured.expired(), "unfinished retirement destroyed its captured owner at teardown");
+        abandoned.Reset();
+        expect(!captured.expired(), "abandoned callback ownership was not retained");
+        DlssNr::GpuLifetime completed;
+        auto owner = std::make_shared<int>(2);
+        captured = owner;
+        completed.Retire([owner = std::move(owner)] {});
+        expect(captured.expired(), "completed retirement retained its captured owner");
+    }
     std::puts("NR GPU lifetime smoke passed (including dormant and shared model generations)");
     return 0;
 }

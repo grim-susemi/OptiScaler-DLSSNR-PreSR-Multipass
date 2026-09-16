@@ -212,7 +212,6 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     uint32_t clampSlots[2] = { UINT32_MAX, UINT32_MAX };
 
     int result = NVSDK_NGX_Result_Success;
-    const bool enlargementReset = nr.reset;
     bool compositionSucceeded = false;
 
     DlssNr::Proxy::Frame modelFrame {};
@@ -287,8 +286,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         bool enlargementReady = true;
         if (cfg.DlssNrTransfer.value_or_default() == 2 && reduced)
         {
-            auto* enlarged = EnlargeMatchedResidual(cmdList, device, modelInput, finalAnswer, depthIn, motionIn,
-                                                    frame, resolveParams, enlargementReset, timingQueue);
+            auto* enlarged = EnlargeMatchedResidual(cmdList, modelInput, modelFrame, frame, resolveParams, timingQueue);
             enlargementReady = enlarged != nullptr;
             if (enlarged) { resolveAnswer = enlarged; resolveParams.Transfer = 2; }
             if (enlarged && resolveParams.DebugView == 2)

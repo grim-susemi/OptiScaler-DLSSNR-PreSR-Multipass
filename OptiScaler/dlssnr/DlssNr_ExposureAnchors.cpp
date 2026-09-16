@@ -100,12 +100,6 @@ void AnchorRemove(int index)
         g_anchors.erase(g_anchors.begin() + index);
 }
 
-void AnchorClear()
-{
-    std::lock_guard<std::mutex> lock(g_anchorMutex);
-    g_anchors.clear();
-}
-
 float AnchoredWhitePoint(float scanNow, bool inverted, float trim)
 {
     EnsureAnchorsLoaded();
@@ -121,9 +115,6 @@ float AnchoredWhitePoint(float scanNow, bool inverted, float trim)
     if (g_anchors.size() == 1)
     {
         const AnchorPoint& p = g_anchors[0];
-
-        if (!(p.scan > kFloor) || !(p.white > 1e-6f))
-            return 0.0f;
 
         const float ratio = inverted ? scanNow / p.scan : p.scan / scanNow;
         return std::clamp(p.white * ratio * trim, 0.01f, 4096.0f);

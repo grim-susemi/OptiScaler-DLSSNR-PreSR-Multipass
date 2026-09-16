@@ -137,15 +137,7 @@ void Tick(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList, uint64_t sub
                 if (!std::isfinite(value))
                     continue;
 
-                // Only values that could BE an exposure are allowed into the range, and this is
-                // the whole of "8 watching, none moving" never changing.
-                //
-                // A buffer is usually zero the first time it is read -- created but not yet
-                // written, or read a frame before the game fills it. That zero became `lowest`,
-                // and since movement is a ratio guarded by `lowest > kFloor`, one early zero
-                // disqualified that candidate for the rest of the session however the light
-                // changed. The range has to be built from plausible samples, not from whichever
-                // sample happened to be first.
+                // Only plausible positive exposure values contribute to the observed range.
                 if (value <= kFloor || value >= kCeiling)
                 {
                     t.latest = value;
@@ -166,15 +158,7 @@ void Tick(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList, uint64_t sub
 
                 t.inRange++;
 
-                // "Moves" is the whole point of the readout, and the first version of this test
-                // was wrong in a way that mattered: a spread of ten percent of the highest value
-                // seen is a threshold of zero when the highest value seen is zero, so three buffers
-                // sitting at 0.00000 with float noise around them all reported MOVES.
-                //
-                // Ratios, not differences, and only over values that could be an exposure at all.
-                // An exposure is positive, is not a thousandth of a thousandth, and does not sit at
-                // a million. Nioh 3's real one runs 0.0019 to 0.616 -- a factor of three hundred --
-                // so a quarter is a low bar that noise cannot reach.
+                // Require a 25% ratio change across plausible samples to reject near-zero numerical noise.
                 if (t.inRange > 1 && t.highest > t.lowest * 1.25f)
                     t.moves = true;
 
@@ -187,10 +171,7 @@ void Tick(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList, uint64_t sub
         }
     }
 
-    // Periodic movement readout. The menu's Advanced panel shows which candidate tracks the light, but
-    // the log did not -- so a game the scan is being taught (Cyberpunk) could not be cracked from a log
-    // alone. Every ~300 frames, name the candidates that MOVE and their travel: the exposure is the one
-    // that swings widely between bright and dark. Throttled, and only while the scan is wanted.
+    // Log moving candidates and their observed ranges every 300 scan frames.
     if (g_scan.frames > 0 && g_scan.frames % 300 == 0)
     {
         unsigned int movers = 0;
@@ -218,14 +199,7 @@ void Tick(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList, uint64_t sub
     if (dst == nullptr)
         return;
 
-    // The state a candidate is in is the game's business and nothing here has a contract about it.
-    //
-    // UNORDERED_ACCESS is the assumption, and it is the reasonable one: every candidate got here by
-    // having an unordered access view created on it, which is what a compute shader writes through,
-    // and an eye adaptation buffer is written every frame and read by the next pass. It is still an
-    // assumption, which is why the whole scan is behind a setting that is off by default -- getting
-    // this wrong on someone's machine costs them a frame or a device, and nobody who has not asked
-    // for the scan should be exposed to that.
+    // Discovered UAVs have no exposure-state contract. Scanning assumes UNORDERED_ACCESS.
     for (size_t i = 0; i < g_scan.tracked.size(); ++i)
     {
         Tracked& t = g_scan.tracked[i];
@@ -270,18 +244,8 @@ void Tick(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList, uint64_t sub
     g_scan.status = "";
 }
 
-// Drop the scan's references to the resources it captured, WITHOUT touching our own readback buffers.
-//
-// The scan AddRef's every candidate it adopts (Adopt) but nothing ever released them -- Shutdown() has
-// no callers -- so a Streamline/DLSS-D-owned resource that passes the filter is pinned by our stray
-// AddRef, and when the driver frees its (placed) heap at feature teardown the surviving wrapper points
-// at freed memory: the use-after-free that removed the device in Cyberpunk (a lock on a freed object in
-// nvwgf2umx). Calling this at feature release drops our references first, so nothing we hold outlives
-// the heap. Only the candidates (foreign resources) are released here -- NOT the readback ring, which
-// is ours and may have GPU copies in flight; freeing that here would be a new hazard. Capture is gated
-// on NR being ENABLED (not on the scan source), so this releases whatever was captured whenever NR is
-// on -- scan selected or not; it is a no-op only when NR is off (nothing captured), so FSR/XeSS users
-// with NR off pay nothing. The scan re-adopts candidates next frame.
+// Release foreign resource references before their placed heaps are destroyed.
+// Keep our readback ring alive: recorded copies may still be in flight.
 void ReleaseTrackedResources()
 {
     std::lock_guard<std::mutex> lock(g_scanMutex);

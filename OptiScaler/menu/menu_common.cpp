@@ -1639,7 +1639,7 @@ void MenuCommon::BeginMenuFrameIfNeeded(RenderMenuContext& ctx)
     // setting and nothing else: an overlay that appears because a scan is running, rather than
     // because someone asked for it, is an overlay nobody asked for.
     const bool scanIndicator = config->DlssNrScanMeter.value_or_default() &&
-                               DlssNr::ExposureScan::Where() != DlssNr::ExposureScan::Verdict::Off;
+                               DlssNr::ExposureScan::Scanning();
 
     if ((!config->DisableSplash.value_or_default() && now > splashStart && now < splashLimit) ||
         config->ShowFps.value_or_default() || _isVisible || ImGui::notifications.size() > 0 || scanIndicator ||

@@ -285,49 +285,4 @@ class DlssNr_Common
         return constants;
     }
 
-  protected:
-    // The model's own parameter names, spelled once.
-    //
-    // These are not ours to choose and they do not vary by API, which is the whole reason they are
-    // here rather than in the Direct3D 12 file. Getting one wrong is silent: the model keeps its
-    // previous value and the control simply appears to do nothing.
-    static constexpr const char* kEnabled = "DLSSNR.Enabled";
-    static constexpr const char* kWidth = "DLSSNR.Width";
-    static constexpr const char* kHeight = "DLSSNR.Height";
-
-    static constexpr const char* kColor = "DLSSNR.Color";
-    static constexpr const char* kDepth = "DLSSNR.Depth";
-    static constexpr const char* kMotion = "DLSSNR.MVec";
-    static constexpr const char* kOutput = "DLSSNR.Output";
-
-    static constexpr const char* kDepthInverted = "DLSSNR.DepthInverted";
-    static constexpr const char* kReset = "DLSSNR.Reset";
-    static constexpr const char* kMvScaleX = "DLSSNR.MVecScaleX";
-    static constexpr const char* kMvScaleY = "DLSSNR.MVecScaleY";
-
-    // Read once, while the feature is built. Writing these only at evaluate does nothing at all,
-    // which is why several of them appeared to be dead controls for a long time.
-    static constexpr const char* kPreset = "DLSSNR.Hint.Render.Preset";
-    static constexpr const char* kIntensity = "DLSSNR.Intensity";
-    static constexpr const char* kStyle = "DLSSNR.Style";
-    static constexpr const char* kLocalStructure = "DLSSNR.LocalStructureStrength";
-    static constexpr const char* kLocalTone = "DLSSNR.LocalToneStrength";
-    // Not a parameter of this model. Kept named so nobody re-adds it: a scan of nvngx_dlssnr.dll for
-    // DLSSNR.* yields 61 names and this is absent from them, while every other name here is present.
-    // Writing it was harmless -- the block is string-keyed -- but it made a control look real when
-    // nothing was listening, which is worse than not having one.
-    // static constexpr const char* kGlobalTone = "DLSSNR.GlobalToneStrength";
-
-    // Despite the name, this is the automatic *skin* mask, not an interface mask.
-    static constexpr const char* kAutoMask = "DLSSNR.UseAutoMask";
-
-    // Defaults to -1, meaning follow local structure. It is not a 0..1 strength and -1 is not "off".
-    static constexpr const char* kSkinStructure = "DLSSNR.SkinStructureStrength";
-
-    // The interface layer, its alpha, and the composited frame. The model accepts all three and is
-    // currently given none of them: with no interface supplied there is nothing to correct.
-    static constexpr const char* kUi = "DLSSNR.UI";
-    static constexpr const char* kUiAlpha = "DLSSNR.UIAlpha";
-    static constexpr const char* kBackbuffer = "DLSSNR.Backbuffer";
-    static constexpr const char* kUiCorrection = "DLSSNR.UICorrection";
 };

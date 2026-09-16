@@ -68,12 +68,10 @@ void RenderNrCompareTags()
 
 void RenderExposureScanIndicator(float alpha)
 {
-    using DlssNr::ExposureScan::Verdict;
-
     if (!Config::Instance()->DlssNrScanMeter.value_or_default())
         return;
 
-    if (DlssNr::ExposureScan::Where() == Verdict::Off)
+    if (!DlssNr::ExposureScan::Scanning())
         return;
 
     int which = 0;

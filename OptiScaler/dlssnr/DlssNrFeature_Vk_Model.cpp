@@ -60,21 +60,6 @@ bool ModelVk::Impl::Fail(const char* why)
     return false;
 }
 
-bool ModelVk::Impl::InitDriver(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device)
-{
-    if (!NVNGXProxy::IsVulkanInited() &&
-        !NVNGXProxy::InitVulkan(instance, physicalDevice, device, vkGetInstanceProcAddr, vkGetDeviceProcAddr))
-        return Fail("the NVIDIA NGX Vulkan driver could not initialize");
-    if (!NVNGXProxy::IsVulkanInited() || !NVNGXProxy::VULKAN_GetCapabilityParameters() ||
-        !NVNGXProxy::VULKAN_CreateFeature1() || !NVNGXProxy::VULKAN_EvaluateFeature() ||
-        !NVNGXProxy::VULKAN_ReleaseFeature() || !NVNGXProxy::VULKAN_DestroyParameters())
-        return Fail("the NVIDIA NGX Vulkan driver interface is incomplete");
-    if (!state.ngxInitialised)
-        LOG_INFO("DLSS-NR Vulkan: using the NVIDIA NGX driver dispatcher");
-    state.ngxInitialised = true;
-    return true;
-}
-
 void ModelVk::Impl::ReleaseModels()
 {
     // GPU work is retired by callers before feature/map teardown.
@@ -92,17 +77,13 @@ bool ModelVk::Impl::CreateModel(VkCommandBuffer commandBuffer, unsigned int pass
                  unsigned int height, const Config& config)
 {
     auto& model = state.models[passIndex];
-    if (model.feature)
-        return true;
-    if (!model.parameters)
+    // PrepareModels calls this once per missing layer; failures latch until Shutdown releases it.
+    const auto allocated = NVNGXProxy::VULKAN_GetCapabilityParameters()(&model.parameters);
+    if (allocated != NVSDK_NGX_Result_Success || !model.parameters)
     {
-        const auto result = NVNGXProxy::VULKAN_GetCapabilityParameters()(&model.parameters);
-        if (result != NVSDK_NGX_Result_Success || !model.parameters)
-        {
-            LOG_ERROR("DLSS-NR Vulkan: capability parameters for pass {} failed 0x{:X}", passIndex + 1,
-                      static_cast<unsigned int>(result));
-            return Fail("the NVIDIA NGX driver could not allocate capability parameters");
-        }
+        LOG_ERROR("DLSS-NR Vulkan: capability parameters for pass {} failed 0x{:X}", passIndex + 1,
+                  static_cast<unsigned int>(allocated));
+        return Fail("the NVIDIA NGX driver could not allocate capability parameters");
     }
     auto* parameters = model.parameters;
     SetModelCreation(parameters, Profiles::PassSettings(config, passIndex), width, height);
@@ -200,8 +181,15 @@ bool ModelVk::Impl::PrepareModels(VkCommandBuffer cmdBuffer, const DlssNrFrameIn
     const bool beforeSr = frame.BeforeUpscale;
     const bool rayReconstruction = frame.RayReconstruction;
     const bool reduced = workWidth != width || workHeight != height;
-    if (!InitDriver(instance, physicalDevice, device))
-        return false;
+    if (!NVNGXProxy::InitVulkan(instance, physicalDevice, device, vkGetInstanceProcAddr, vkGetDeviceProcAddr))
+        return Fail("the NVIDIA NGX Vulkan driver could not initialize");
+    if (!NVNGXProxy::VULKAN_GetCapabilityParameters() || !NVNGXProxy::VULKAN_CreateFeature1() ||
+        !NVNGXProxy::VULKAN_EvaluateFeature() || !NVNGXProxy::VULKAN_ReleaseFeature() ||
+        !NVNGXProxy::VULKAN_DestroyParameters())
+        return Fail("the NVIDIA NGX Vulkan driver interface is incomplete");
+    if (!state.ngxInitialised)
+        LOG_INFO("DLSS-NR Vulkan: using the NVIDIA NGX driver dispatcher");
+    state.ngxInitialised = true;
 
     // A GPU event separates creation uploads from model evaluation.
     if (state.creationPending)
@@ -238,9 +226,6 @@ bool ModelVk::Impl::PrepareModels(VkCommandBuffer cmdBuffer, const DlssNrFrameIn
         }
     }
 
-    if (!state.pass->IsInit())
-        return false;
-
     // Resize. The feature is built for a size and has to be rebuilt when the frame OR the working
     // size changes -- moving the slider is a rebuild, which is why it is compared here.
     bool profileChanged = state.activePasses != passes;
@@ -257,7 +242,7 @@ bool ModelVk::Impl::PrepareModels(VkCommandBuffer cmdBuffer, const DlssNrFrameIn
         // resource that in-flight GPU work still touches is device removal (ERR_GFX_STATE, reproduced
         // on RDR2 and Enshrouded by dragging the model-resolution slider). Drain the device first.
         // Only the rare resize path reaches here, so the CPU stall is a one-off hitch, not per-frame.
-        if (state.device != VK_NULL_HANDLE && vkDeviceWaitIdle(state.device) != VK_SUCCESS)
+        if (vkDeviceWaitIdle(device) != VK_SUCCESS)
             return Fail("the Vulkan device could not retire previous model resources");
 
         ReleaseModels();

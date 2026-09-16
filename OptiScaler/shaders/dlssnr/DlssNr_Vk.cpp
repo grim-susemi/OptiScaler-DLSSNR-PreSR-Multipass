@@ -8,7 +8,17 @@
 #include <dlssnr/DlssNrFinished_Vk.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
+
+// Binding numbers match dlssnr_common.hlsli for both codec pipelines.
+static constexpr VkDescriptorType kBindings[] = {
+    VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+    VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+    VK_DESCRIPTOR_TYPE_SAMPLER,
+};
 
 DlssNr_Vk::DlssNr_Vk(std::string InName, VkDevice InDevice, VkPhysicalDevice InPhysicalDevice)
     : Shader_Vk(InName, InDevice, InPhysicalDevice)
@@ -51,17 +61,9 @@ DlssNr_Vk::DlssNr_Vk(std::string InName, VkDevice InDevice, VkPhysicalDevice InP
     // The layout mirrors the [[vk::binding]] numbers in dlssnr.hlsl, entry for entry. Combined image
     // samplers for the reads: the shader declares its sampler separately, and a combined descriptor
     // satisfies a separately declared sampled image with the sampler half simply unused.
-    std::vector<VkDescriptorSetLayoutBinding> bindings = {
-        CreateBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER),          // Params
-        CreateBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),  // gSource
-        CreateBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),  // gModel
-        CreateBinding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),  // gOriginal
-        CreateBinding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),  // gMotion
-        CreateBinding(5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE),           // gTarget
-        CreateBinding(6, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE),           // gKeep
-        CreateBinding(7, VK_DESCRIPTOR_TYPE_SAMPLER),                 // gLinear
-    };
-
+    std::vector<VkDescriptorSetLayoutBinding> bindings;
+    for (uint32_t binding = 0; binding < std::size(kBindings); ++binding)
+        bindings.push_back(CreateBinding(binding, kBindings[binding]));
     CreateLayouts(bindings);
 
     std::vector<VkDescriptorPoolSize> poolSizes = {
@@ -112,39 +114,21 @@ void DlssNr_Vk::WriteDescriptors(VkDescriptorSet set, VkDeviceSize constantOffse
         return VkDescriptorImageInfo { _textureSampler, v ? v : source, v ? layout : sourceLayout };
     };
 
-    const auto writeInfo = [&](VkImageView v)
-    {
-        return VkDescriptorImageInfo { VK_NULL_HANDLE, v ? v : target, VK_IMAGE_LAYOUT_GENERAL };
+    const VkDescriptorImageInfo images[] = {
+        readInfo(source, sourceLayout),
+        readInfo(model, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+        readInfo(original, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+        readInfo(motion, motionLayout),
+        { VK_NULL_HANDLE, target, VK_IMAGE_LAYOUT_GENERAL },
+        { VK_NULL_HANDLE, keep ? keep : target, VK_IMAGE_LAYOUT_GENERAL },
+        { _textureSampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED },
     };
 
-    VkDescriptorImageInfo sourceInfo = readInfo(source, sourceLayout);
-    VkDescriptorImageInfo modelInfo = readInfo(model, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    VkDescriptorImageInfo originalInfo = readInfo(original, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    VkDescriptorImageInfo motionInfo = readInfo(motion, motionLayout);
-    VkDescriptorImageInfo targetInfo = writeInfo(target);
-    VkDescriptorImageInfo keepInfo = writeInfo(keep);
-    VkDescriptorImageInfo samplerInfo { _textureSampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED };
-
-    const VkWriteDescriptorSet writes[] = {
-        { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 0, 0, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, nullptr,
-          &bufferInfo, nullptr },
-        { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 1, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-          &sourceInfo, nullptr, nullptr },
-        { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 2, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-          &modelInfo, nullptr, nullptr },
-        { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 3, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-          &originalInfo, nullptr, nullptr },
-        { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 4, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-          &motionInfo, nullptr, nullptr },
-        { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 5, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &targetInfo,
-          nullptr, nullptr },
-        { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 6, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &keepInfo,
-          nullptr, nullptr },
-        { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 7, 0, 1, VK_DESCRIPTOR_TYPE_SAMPLER, &samplerInfo,
-          nullptr, nullptr },
-    };
-
-    vkUpdateDescriptorSets(_device, (uint32_t) (sizeof(writes) / sizeof(writes[0])), writes, 0, nullptr);
+    std::array<VkWriteDescriptorSet, std::size(kBindings)> writes;
+    for (uint32_t binding = 0; binding < writes.size(); ++binding)
+        writes[binding] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, binding, 0, 1, kBindings[binding],
+                            binding ? &images[binding - 1] : nullptr, binding ? nullptr : &bufferInfo, nullptr };
+    vkUpdateDescriptorSets(_device, (uint32_t) writes.size(), writes.data(), 0, nullptr);
 }
 
 bool DlssNr_Vk::Dispatch(VkCommandBuffer InCmdList, const DlssNrConstants& InConstants,

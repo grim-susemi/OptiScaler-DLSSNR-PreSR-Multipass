@@ -15,7 +15,6 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
               VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device, VkImageLayout inputLayout)
 {
     const bool beforeSr = frame.BeforeUpscale;
-    const bool rayReconstruction = frame.RayReconstruction;
     auto& cfg = *Config::Instance();
 
     if (ResolvePlacement(cfg.DlssNrRunBeforeSr.value_or_default(), cfg.DlssNrDeferredDlss.value_or_default(),
@@ -36,9 +35,6 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
         return false; // the presentation stage owns this mode
 
     if (!cfg.DlssNrEnabled.value_or_default())
-        return false;
-
-    if (cmdBuffer == VK_NULL_HANDLE || device == VK_NULL_HANDLE || physicalDevice == VK_NULL_HANDLE)
         return false;
 
     std::lock_guard<std::mutex> lock(mutex);
@@ -76,9 +72,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     auto depthResource = WrapImage(depthInfo, frame.DepthReadWrite);
     auto motionResource = WrapImage(motionInfo, frame.MotionReadWrite);
 
-    if (colourInfo.ImageView == VK_NULL_HANDLE ||
-        depthInfo.ImageView == VK_NULL_HANDLE ||
-        motionInfo.ImageView == VK_NULL_HANDLE)
+    if (depthInfo.ImageView == VK_NULL_HANDLE || motionInfo.ImageView == VK_NULL_HANDLE)
         return false;
 
     uint32_t width = colourInfo.Width;
@@ -126,9 +120,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     state.instance = instance;
     state.physicalDevice = physicalDevice;
 
-    // The shader belongs to one device. Replacement features own replacement models.
-    if (state.device != VK_NULL_HANDLE && state.device != device)
-        return Fail("a Vulkan model was dispatched on a different device");
+    // The owning shader supplies its fixed device and has already copied the validated colour/output.
     state.device = device;
 
     if (!PrepareModels(cmdBuffer, frame, width, height, workWidth, workHeight, workScale, passes))
@@ -204,7 +196,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
             if (state.nrScaler != wantScaler)
             {
                 // Drain submitted work before replacing filter pipelines and descriptor resources.
-                if (state.device != VK_NULL_HANDLE && vkDeviceWaitIdle(state.device) != VK_SUCCESS)
+                if (vkDeviceWaitIdle(device) != VK_SUCCESS)
                     return Fail("the Vulkan device could not retire the supersampling filters");
                 state.superUp.reset();
                 state.superDown.reset();

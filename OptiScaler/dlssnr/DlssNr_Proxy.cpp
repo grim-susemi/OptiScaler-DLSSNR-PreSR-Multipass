@@ -16,9 +16,7 @@ struct ProxyState
     std::shared_ptr<DlssNr::CompatibilityRuntime> compatibility;
 
     DlssNr::ModelSettings settings {};
-    unsigned int width = 0, height = 0;
     uint64_t creationEpoch = 0;
-    ID3D12Device* device = nullptr;
     bool failed = false;
     bool reset = true;
 };
@@ -79,13 +77,6 @@ void Context::Impl::RetireState()
     lifetime.BeginGeneration();
 }
 
-bool Context::Available()
-{
-    return NVNGXProxy::IsDx12Inited() && NVNGXProxy::D3D12_GetCapabilityParameters() != nullptr &&
-           NVNGXProxy::D3D12_DestroyParameters() != nullptr && NVNGXProxy::D3D12_ReleaseFeature() != nullptr &&
-           NVNGXProxy::D3D12_CreateFeature() != nullptr && NVNGXProxy::D3D12_EvaluateFeature() != nullptr;
-}
-
 unsigned int Context::Prepare(ID3D12GraphicsCommandList* cmdList, ID3D12Device* device, unsigned int width,
                                     unsigned int height, const ModelSettings& settings, uint64_t submissionEpoch,
                                     bool* ready)
@@ -96,10 +87,11 @@ unsigned int Context::Prepare(ID3D12GraphicsCommandList* cmdList, ID3D12Device* 
     lifetime.Collect();
     if (state.failed || !cmdList || !device || !width || !height)
         return 0;
-    if ((!NVNGXProxy::IsDx12Inited() && !NVNGXProxy::InitDx12(device)) || !Context::Available())
+    if (!NVNGXProxy::InitDx12(device) || !NVNGXProxy::D3D12_GetCapabilityParameters() ||
+        !NVNGXProxy::D3D12_DestroyParameters() || !NVNGXProxy::D3D12_ReleaseFeature() ||
+        !NVNGXProxy::D3D12_CreateFeature() || !NVNGXProxy::D3D12_EvaluateFeature())
         return 0;
-    if (state.feature &&
-        (state.settings != settings || state.device != device || state.width != width || state.height != height))
+    if (state.feature && state.settings != settings)
         _impl->RetireState();
     if (state.params == nullptr)
     {
@@ -143,9 +135,6 @@ unsigned int Context::Prepare(ID3D12GraphicsCommandList* cmdList, ID3D12Device* 
         }
 
         state.settings = settings;
-        state.device = device;
-        state.width = width;
-        state.height = height;
         state.creationEpoch = submissionEpoch;
         LOG_INFO("DLSS-NR: feature created at {}x{} through {}", width, height,
                  state.compatibility ? "direct compatibility runtime" : "NVIDIA NGX driver");

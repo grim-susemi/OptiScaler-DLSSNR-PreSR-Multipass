@@ -101,7 +101,6 @@ struct ModelVk::Impl
     bool Fail(const char* why);
     bool CreateImage(ImageVk& img, uint32_t width, uint32_t height, VkFormat format);
     void Transition(VkCommandBuffer cmd, ImageVk& img, VkImageLayout to);
-    bool InitDriver(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device);
     void ReleaseModels();
     bool CreateModel(VkCommandBuffer commandBuffer, unsigned int passIndex, unsigned int width,
                      unsigned int height, const Config& config);

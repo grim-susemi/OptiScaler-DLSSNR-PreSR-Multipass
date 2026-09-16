@@ -31,12 +31,6 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     // readable. Track every transition so both paths return the resource exactly as their caller gave
     // it to us; a pre-SR resource without UAV support is written through a scratch-and-copy fallback.
     const auto outputArrival = static_cast<D3D12_RESOURCE_STATES>(frame.OutputArrivalState);
-    D3D12_RESOURCE_STATES targetState = outputArrival;
-    const auto TransitionTarget = [&](D3D12_RESOURCE_STATES to)
-    {
-        Barrier(cmdList, target, targetState, to);
-        targetState = to;
-    };
 
     auto* device = shader._device;
     const D3D12_RESOURCE_DESC desc = target->GetDesc();
@@ -113,36 +107,16 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     ID3D12Resource* const gameColor = target;
     if (cropColor)
     {
-        TransitionTarget(D3D12_RESOURCE_STATE_COPY_SOURCE);
-        Barrier(cmdList, nr.activeColor, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
+        resources.Set(gameColor, D3D12_RESOURCE_STATE_COPY_SOURCE, outputArrival);
+        resources.Set(nr.activeColor, D3D12_RESOURCE_STATE_COPY_DEST);
         DlssNr::CopyActiveColor(cmdList, nr.activeColor, gameColor, *active);
-        TransitionTarget(outputArrival);
-        Barrier(cmdList, nr.activeColor, D3D12_RESOURCE_STATE_COPY_DEST,
-                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        resources.Set(gameColor, outputArrival);
+        resources.Read(nr.activeColor);
         target = nr.activeColor;
-        targetState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
     }
 
-    const auto FinishColor = [&](bool copyBack)
-    {
-        if (cropColor)
-        {
-            if (copyBack)
-            {
-                TransitionTarget(D3D12_RESOURCE_STATE_COPY_SOURCE);
-                Barrier(cmdList, gameColor, outputArrival, D3D12_RESOURCE_STATE_COPY_DEST);
-                DlssNr::CopyActiveColor(cmdList, gameColor, target, *active);
-                Barrier(cmdList, gameColor, D3D12_RESOURCE_STATE_COPY_DEST, outputArrival);
-            }
-            TransitionTarget(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        }
-        else
-        {
-            TransitionTarget(outputArrival);
-        }
-    };
-
-    const float whitePoint = HoldColor(cmdList, device, target, targetState,
+    const float whitePoint = HoldColor(cmdList, device, target,
+        cropColor ? D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE : outputArrival,
         frame.WhitePointOverride > 0.0f ? frame.WhitePointOverride : cfg.DlssNrWhitePointScale.value_or_default());
     DlssNrConstants encodeParams {};
     encodeParams.Mode = DlssNrMode_Encode;
@@ -154,12 +128,12 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     encodeParams.Width = width;
     encodeParams.Height = height;
 
-    TransitionTarget(D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    resources.Read(target, outputArrival);
     shader.DispatchPass(cmdList, encodeParams, target, nullptr, nullptr, nullptr, nr.colorCopy,
                         nr.hdrCopy);
 
     if (targetSupportsUav)
-        TransitionTarget(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        resources.Set(target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     // The transitions double as the wait for the encode's writes.
     resources.Read(nr.colorCopy);
     resources.Read(nr.hdrCopy);
@@ -218,7 +192,6 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
     {
         nr.reset = true;
         ReportSkipOnce("the game's depth or motion vectors could not be made readable this frame");
-        FinishColor(false);
         return false;
     }
 
@@ -333,7 +306,7 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
             targetSupportsUav ? target : nr.hdrCopy;
 
         if (targetSupportsUav)
-            TransitionTarget(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            resources.Set(target, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         else
             resources.Set(nr.hdrCopy, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
@@ -344,17 +317,17 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         if (resolved && !targetSupportsUav)
         {
             resources.Set(nr.hdrCopy, D3D12_RESOURCE_STATE_COPY_SOURCE);
-            const D3D12_RESOURCE_STATES priorTargetState = targetState;
-            TransitionTarget(D3D12_RESOURCE_STATE_COPY_DEST);
+            resources.Set(target, D3D12_RESOURCE_STATE_COPY_DEST);
             cmdList->CopyResource(target, nr.hdrCopy);
-            TransitionTarget(priorTargetState);
+            resources.Read(target);
         }
 
         // Schedule matched proxy/output capture for delayed readback.
         if (captureFrames.isActive())
         {
             captureFrames.record(cmdList, device, nr.colorCopy, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-                                 target, targetState);
+                                 target, targetSupportsUav ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS
+                                                           : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
         }
     }
@@ -368,7 +341,12 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
 
     // Failed evaluations leave the game's original image intact. A successful copy-back writes
     // only the active rectangle and restores both resources before DLSS consumes the image.
-    FinishColor(compositionSucceeded);
+    if (cropColor && compositionSucceeded)
+    {
+        resources.Set(target, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        resources.Set(gameColor, D3D12_RESOURCE_STATE_COPY_DEST);
+        DlssNr::CopyActiveColor(cmdList, gameColor, target, *active);
+    }
     resources.Restore();
     EndGpuTiming(cmdList);
     return compositionSucceeded;

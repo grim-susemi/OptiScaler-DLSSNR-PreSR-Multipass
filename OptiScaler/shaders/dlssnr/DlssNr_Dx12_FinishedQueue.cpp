@@ -132,17 +132,12 @@ auto DlssNr_Dx12::State::FinishedPictureSubmitted(ID3D12CommandQueue* queue, UIN
                 }
 }
 
-auto DlssNr_Dx12::State::FinishedPictureColorSpace(IDXGISwapChain* swapchain, DXGI_COLOR_SPACE_TYPE colorSpace) -> void
-{
-    swapchain->SetPrivateData(late.colorSpaceKey, sizeof(colorSpace), &colorSpace);
-}
-
 auto DlssNr_Dx12::State::FinishedColorSpace(IDXGISwapChain* swapchain, DXGI_FORMAT format) -> DXGI_COLOR_SPACE_TYPE
 {
     auto space = format == DXGI_FORMAT_R16G16B16A16_FLOAT ? DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709
                                                         : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
     UINT size = sizeof(space);
-    swapchain->GetPrivateData(late.colorSpaceKey, &size, &space);
+    swapchain->GetPrivateData(DlssNr::FinishedColorSpaceKey, &size, &space);
     return space;
 }
 

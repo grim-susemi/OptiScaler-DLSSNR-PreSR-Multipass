@@ -227,9 +227,7 @@ void RenderInput(Config* config)
             HelpMarker("Display the scanned value. Does not change the image.");
             if (DlssNr::ExposureScan::Scanning())
             {
-                int which = 0;
-                float low = 0.0f, high = 0.0f;
-                const float live = DlssNr::ExposureScan::BestValue(&which, &low, &high);
+                const float live = DlssNr::ExposureScan::BestValue();
 
                 const bool isSource = config->DlssNrWhitePointSource.value_or_default() == 2;
                 ImGui::BeginDisabled(live <= 0.0f || !isSource);

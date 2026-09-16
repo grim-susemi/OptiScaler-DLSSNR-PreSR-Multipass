@@ -25,7 +25,7 @@ void NoteUav(ID3D12Resource* resource, const D3D12_UNORDERED_ACCESS_VIEW_DESC* d
 void NoteResource(const D3D12_RESOURCE_DESC* desc, ID3D12Resource* resource);
 
 // Widest observed exposure ratio wins; returns zero if no candidate is usable.
-float BestValue(int* outIndex = nullptr, float* outLowest = nullptr, float* outHighest = nullptr);
+float BestValue(float* outLowest = nullptr, float* outHighest = nullptr);
 std::vector<Candidate> Report();
 const char* Status();
 bool Scanning();

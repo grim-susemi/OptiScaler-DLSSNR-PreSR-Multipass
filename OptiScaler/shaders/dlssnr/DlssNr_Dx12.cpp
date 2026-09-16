@@ -607,9 +607,8 @@ void ApplyToFinishedPictureDx11(IDXGISwapChain* swapchain)
 }
 void FinishedPictureColorSpace(IDXGISwapChain* swapchain, DXGI_COLOR_SPACE_TYPE colorSpace)
 {
-    static constexpr GUID key = { 0x34a31e7b, 0x84c5, 0x44ef, { 0xa7, 0x4d, 0x6b, 0xd3, 0x60, 0x8c, 0xe5, 0x22 } };
     if (swapchain)
-        swapchain->SetPrivateData(key, sizeof(colorSpace), &colorSpace);
+        swapchain->SetPrivateData(FinishedColorSpaceKey, sizeof(colorSpace), &colorSpace);
 }
 std::string FinishedPictureStatus()
 {

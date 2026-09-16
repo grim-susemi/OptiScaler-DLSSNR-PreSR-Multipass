@@ -11,6 +11,9 @@ namespace DlssNr
 {
 inline constexpr unsigned int MaxPassCount = 30;
 inline constexpr unsigned int DefaultMaxPassCount = 3;
+inline constexpr GUID FinishedColorSpaceKey = {
+    0x34a31e7b, 0x84c5, 0x44ef, { 0xa7, 0x4d, 0x6b, 0xd3, 0x60, 0x8c, 0xe5, 0x22 }
+};
 
 // Public callbacks route through registered upscaler owners. They do not own GPU state.
 std::string FinishedPictureStatus();

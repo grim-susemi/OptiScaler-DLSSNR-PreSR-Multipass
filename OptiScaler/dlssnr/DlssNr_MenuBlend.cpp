@@ -72,8 +72,6 @@ void RenderBlend(Config* config)
         ImGui::TreePop();
     }
 
-    // Highlight guard, directly under the white point / trim -- it bounds the model's edit and
-    // belongs with the exposure controls it works alongside.
     float maxRatio = config->DlssNrMaxRatio.value_or_default();
     if (ImGui::SliderFloat("Highlight guard", &maxRatio, 1.0f, 8.0f, "%.1fx"))
         config->DlssNrMaxRatio = maxRatio;

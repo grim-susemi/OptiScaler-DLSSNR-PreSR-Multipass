@@ -184,31 +184,14 @@ auto DlssNr_Dx12::State::ReleaseResources() -> void
     std::fill(std::begin(nr.passCreateFailed), std::end(nr.passCreateFailed), false);
     modelRunning = false;
 
-    ParkNrResource(nr.output);
-
-    ParkNrResource(nr.passScratch);
-    ParkNrResource(nr.passClamp);
+    for (auto** resource : { &nr.output, &nr.passScratch, &nr.passClamp, &nr.colorCopy, &nr.hdrCopy,
+                             &nr.activeColor, &nr.colorSmall })
+        ParkNrResource(*resource);
     nr.passScratchFailed = false;
 
-    ParkNrResource(nr.colorCopy);
-
-    ParkNrResource(nr.hdrCopy);
-
-    ParkNrResource(nr.activeColor);
-
-    ParkNrResource(nr.colorSmall);
-
-    if (nr.superUp != nullptr)
-    {
-        lifetime.Retire([up = nr.superUp] { delete up; });
-        nr.superUp = nullptr;
-    }
-
-    if (nr.superDown != nullptr)
-    {
-        lifetime.Retire([down = nr.superDown] { delete down; });
-        nr.superDown = nullptr;
-    }
+    for (auto** scaler : { &nr.superUp, &nr.superDown })
+        if (auto* retired = std::exchange(*scaler, nullptr))
+            lifetime.Retire([retired] { delete retired; });
 
     ParkNrResource(nr.outputNative);
 

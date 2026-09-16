@@ -142,17 +142,15 @@ void NoteUav(ID3D12Resource* resource, const D3D12_UNORDERED_ACCESS_VIEW_DESC* d
     Adopt(resource, std::move(*candidate));
 }
 
-float BestValue(int* outIndex, float* outLowest, float* outHighest)
+float BestValue(float* outLowest, float* outHighest)
 {
     std::lock_guard<std::mutex> lock(g_scanMutex);
 
-    int best = -1;
+    const Tracked* best = nullptr;
     float bestRatio = 0.0f;
 
-    for (size_t i = 0; i < g_scan.tracked.size(); ++i)
+    for (const auto& t : g_scan.tracked)
     {
-        const Tracked& t = g_scan.tracked[i];
-
         if (!t.moves || t.lowest <= kFloor)
             continue;
 
@@ -161,23 +159,20 @@ float BestValue(int* outIndex, float* outLowest, float* outHighest)
         if (ratio > bestRatio)
         {
             bestRatio = ratio;
-            best = (int) i;
+            best = &t;
         }
     }
 
-    if (best < 0)
+    if (!best)
         return 0.0f;
 
-    if (outIndex != nullptr)
-        *outIndex = best + 1;
-
     if (outLowest != nullptr)
-        *outLowest = g_scan.tracked[best].lowest;
+        *outLowest = best->lowest;
 
     if (outHighest != nullptr)
-        *outHighest = g_scan.tracked[best].highest;
+        *outHighest = best->highest;
 
-    return g_scan.tracked[best].latest;
+    return best->latest;
 }
 
 std::vector<Candidate> Report()

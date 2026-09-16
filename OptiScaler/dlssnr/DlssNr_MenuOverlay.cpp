@@ -74,9 +74,8 @@ void RenderExposureScanIndicator(float alpha)
     if (!DlssNr::ExposureScan::Scanning())
         return;
 
-    int which = 0;
     float low = 0.0f, high = 0.0f;
-    const float now = DlssNr::ExposureScan::BestValue(&which, &low, &high);
+    const float now = DlssNr::ExposureScan::BestValue(&low, &high);
 
     // Nothing found yet, or no range to place it in: a dim lamp, which says "watching, no reading"
     // without saying it in words.

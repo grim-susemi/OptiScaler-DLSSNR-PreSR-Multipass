@@ -209,10 +209,7 @@ ID3D12Resource* PrepareDlssNrInput(DlssNr_Dx12& shader, ID3D12Device* device, ID
     if (color == nullptr || !shader.IsInit() || !DlssNr::CanRunBeforeUpscale_Dx12(parameters) ||
         !Config::Instance()->DlssNrEnabled.value_or_default())
         return nullptr;
-    const auto desc = color->GetDesc();
-    if (desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || desc.SampleDesc.Count != 1 ||
-        desc.DepthOrArraySize != 1 || desc.MipLevels != 1 ||
-        !shader.CreateBufferResource(device, color, D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
+    if (!shader.CreateBufferResource(device, color, D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
         return nullptr;
 
     ShaderPipeline_Dx12 pipeline;

@@ -129,11 +129,7 @@ struct DlssNr_Dx12::State
     void BeginInputHold(ID3D12GraphicsCommandList* cmd, NVSDK_NGX_Parameter* params,
                         const D3D12_RESOURCE_STATES* states);
 
-    // A capture requested from outside the game: when the render path has no fence of its own, the write
-    // waits until this frame count, by which point the GPU is certainly past the copies.
-
-    // Dropping a file named dlssnr-capture.trigger beside OptiScaler requests a capture, so a session can
-    // be asked for one from outside the game -- no alt-tab, no menu. Checked once a second, effectively.
+    // Poll dlssnr-capture.trigger beside OptiScaler every 60 evaluations.
     void CheckCaptureTrigger();
 
     DlssNr::GpuLifetime lifetime;
@@ -159,7 +155,7 @@ struct DlssNr_Dx12::State
     void CopyMeterToReadback(ID3D12GraphicsCommandList* cmdList);
     void CopyGridToReadback(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* grid, ID3D12Resource* readback);
 
-    // Consume texel zero from the delayed readback ring, retaining the last plausible exposure.
+    // Calibration consumes the grid; the exposure meter consumes only texel zero.
     void ConsumeCalibrationReadback();
 
     void ConsumeMeterReadback();
@@ -196,9 +192,7 @@ struct DlssNr_Dx12::State
 
     bool TuningMatchesFeature(const Config& cfg, unsigned int requestedPasses);
 
-    // Guards the module's state. Every caller is now on the game's render thread, so this is no longer
-    // holding two threads apart -- but the D3D11-on-D3D12 bridge enters from its own call site, and the
-    // cost is a CPU-side lock on a path that already records command lists.
+    // Serialize rendering, presentation and submission callbacks; destruction can re-enter hooks.
     std::recursive_mutex mutex;
 
     // Restore the caller's compute bindings on every exit, without capturing NR's own state.
@@ -340,9 +334,6 @@ struct DlssNr_Dx12::State
         std::string status = "Waiting for a finished picture.";
         bool reset = true;
         std::atomic<bool> tracking { false };
-        static constexpr GUID colorSpaceKey = {
-            0x34a31e7b, 0x84c5, 0x44ef, { 0xa7, 0x4d, 0x6b, 0xd3, 0x60, 0x8c, 0xe5, 0x22 }
-        };
 
         void Say(const char* message);
 
@@ -370,8 +361,6 @@ struct DlssNr_Dx12::State
     std::string FinishedPictureStatus();
 
     void FinishedPictureSubmitted(ID3D12CommandQueue* queue, UINT count, ID3D12CommandList* const* lists);
-
-    void FinishedPictureColorSpace(IDXGISwapChain* swapchain, DXGI_COLOR_SPACE_TYPE colorSpace);
 
     DXGI_COLOR_SPACE_TYPE FinishedColorSpace(IDXGISwapChain* swapchain, DXGI_FORMAT format);
 
@@ -416,12 +405,7 @@ struct DlssNr_Dx12::State
                           ID3D12CommandQueue* timingQueue, bool rayReconstruction, unsigned long long submissionEpoch,
                           bool interop);
 
-    // The pass. Resources in, nothing read from anywhere the caller cannot see.
-
     DlssNr::CalibrationReading Calibration();
-
-    // What the game offers by way of exposure, and what has been read from it. For the menu, so a user
-    // can see whether this game supplies one at all without having to read a log.
 
     void ReleaseResources();
 

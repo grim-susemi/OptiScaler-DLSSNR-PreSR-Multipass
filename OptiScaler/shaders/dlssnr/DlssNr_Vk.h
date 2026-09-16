@@ -25,6 +25,7 @@
 #include "SysUtils.h"
 #include <shaders/Shader_Vk.h>
 #include "DlssNr_Common.h"
+#include <dlssnr/DlssNr_Image_Vk.h>
 #include <memory>
 
 namespace DlssNr
@@ -61,10 +62,7 @@ class DlssNr_Vk : public Shader_Vk
 
     // Stands in for a resource a given mode does not read. One pixel, never sampled for its content,
     // present only because Vulkan will not accept an unwritten binding.
-    VkImage _dummyImage = VK_NULL_HANDLE;
-    VkDeviceMemory _dummyMemory = VK_NULL_HANDLE;
-    VkImageView _dummyView = VK_NULL_HANDLE;
-    bool _dummyReady = false;
+    DlssNr::ImageVk _dummy;
 
     bool CreateDummy(VkCommandBuffer cmdList);
 

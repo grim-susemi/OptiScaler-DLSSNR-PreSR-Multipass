@@ -109,85 +109,21 @@ DlssNr_Vk::~DlssNr_Vk()
     _finished.reset();
     _model.reset();
     if (_finishedPipeline) vkDestroyPipeline(_device, _finishedPipeline, nullptr);
-    if (_device == VK_NULL_HANDLE)
-        return;
-
-    if (_dummyView != VK_NULL_HANDLE)
-        vkDestroyImageView(_device, _dummyView, nullptr);
-
-    if (_dummyImage != VK_NULL_HANDLE)
-        vkDestroyImage(_device, _dummyImage, nullptr);
-
-    if (_dummyMemory != VK_NULL_HANDLE)
-        vkFreeMemory(_device, _dummyMemory, nullptr);
+    _dummy.Destroy(_device);
 }
 
-// One pixel, R16G16B16A16_SFLOAT so it is legal for both a sampled read and a storage write, moved
-// once into GENERAL and left there. Its content is never read: it exists because Vulkan rejects a
-// descriptor set with an unwritten binding, and the shader declares all seven resources at file scope
-// whichever mode is running.
+// All declared descriptors must be valid, even when the selected mode does not read them.
 bool DlssNr_Vk::CreateDummy(VkCommandBuffer cmdList)
 {
-    if (_dummyReady)
+    if (_dummy.layout == VK_IMAGE_LAYOUT_GENERAL)
         return true;
-
-    if (_dummyImage == VK_NULL_HANDLE)
+    if (!_dummy.Ensure(_device, _physicalDevice, 1, 1, VK_FORMAT_R16G16B16A16_SFLOAT))
     {
-        VkImageCreateInfo info {};
-        info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        info.imageType = VK_IMAGE_TYPE_2D;
-        info.format = VK_FORMAT_R16G16B16A16_SFLOAT;
-        info.extent = { 1, 1, 1 };
-        info.mipLevels = 1;
-        info.arrayLayers = 1;
-        info.samples = VK_SAMPLE_COUNT_1_BIT;
-        info.tiling = VK_IMAGE_TILING_OPTIMAL;
-        info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
-        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-        if (vkCreateImage(_device, &info, nullptr, &_dummyImage) != VK_SUCCESS)
-        {
-            LOG_ERROR("DLSS-NR Vulkan pass: could not create the placeholder image");
-            return false;
-        }
-
-        VkMemoryRequirements req {};
-        vkGetImageMemoryRequirements(_device, _dummyImage, &req);
-
-        VkMemoryAllocateInfo alloc {};
-        alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        alloc.allocationSize = req.size;
-        alloc.memoryTypeIndex =
-            FindMemoryType(_physicalDevice, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-        if (vkAllocateMemory(_device, &alloc, nullptr, &_dummyMemory) != VK_SUCCESS ||
-            vkBindImageMemory(_device, _dummyImage, _dummyMemory, 0) != VK_SUCCESS)
-        {
-            LOG_ERROR("DLSS-NR Vulkan pass: could not back the placeholder image");
-            return false;
-        }
-
-        VkImageViewCreateInfo view {};
-        view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        view.image = _dummyImage;
-        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        view.format = VK_FORMAT_R16G16B16A16_SFLOAT;
-        view.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-
-        if (vkCreateImageView(_device, &view, nullptr, &_dummyView) != VK_SUCCESS)
-        {
-            LOG_ERROR("DLSS-NR Vulkan pass: could not view the placeholder image");
-            return false;
-        }
+        LOG_ERROR("DLSS-NR Vulkan pass: could not allocate the placeholder image");
+        return false;
     }
-
-    // GENERAL satisfies both a sampled read and a storage write, so the placeholder can stand in for
-    // either kind of slot without ever changing layout again.
-    VkImageSubresourceRange range { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-    SetImageLayout(cmdList, _dummyImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, range);
-
-    _dummyReady = true;
+    SetImageLayout(cmdList, _dummy.info.Image, _dummy.layout, VK_IMAGE_LAYOUT_GENERAL, _dummy.info.SubresourceRange);
+    _dummy.layout = VK_IMAGE_LAYOUT_GENERAL;
     return true;
 }
 
@@ -201,13 +137,13 @@ void DlssNr_Vk::WriteDescriptors(VkDescriptorSet set, VkDeviceSize constantOffse
     // left in. A real read is bound in the layout the caller says its image is in.
     const auto readInfo = [&](VkImageView v, VkImageLayout layout)
     {
-        return VkDescriptorImageInfo { _textureSampler, v != VK_NULL_HANDLE ? v : _dummyView,
+        return VkDescriptorImageInfo { _textureSampler, v != VK_NULL_HANDLE ? v : _dummy.info.ImageView,
                                        v != VK_NULL_HANDLE ? layout : VK_IMAGE_LAYOUT_GENERAL };
     };
 
     const auto writeInfo = [&](VkImageView v)
     {
-        return VkDescriptorImageInfo { VK_NULL_HANDLE, v != VK_NULL_HANDLE ? v : _dummyView,
+        return VkDescriptorImageInfo { VK_NULL_HANDLE, v != VK_NULL_HANDLE ? v : _dummy.info.ImageView,
                                        VK_IMAGE_LAYOUT_GENERAL };
     };
 

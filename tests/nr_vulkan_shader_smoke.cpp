@@ -66,6 +66,8 @@ try
     std::array<DlssNr::ImageVk, 6> images {}; // source, proxy, keep, model, result, dummy
     for (auto& image : images)
     {
+        if (!image.Ensure(device, pd, 1, 1, VK_FORMAT_R16G16B16A16_SFLOAT))
+            throw std::runtime_error("NR placeholder allocation failed");
         for (auto format : { VK_FORMAT_R32_SFLOAT, VK_FORMAT_R32G32_SFLOAT, VK_FORMAT_R16G16B16A16_SFLOAT,
                              VK_FORMAT_R32G32B32A32_SFLOAT })
         {

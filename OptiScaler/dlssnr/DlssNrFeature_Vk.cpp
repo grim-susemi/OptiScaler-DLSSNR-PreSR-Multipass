@@ -4,6 +4,7 @@
 #include "DlssNrFeature_Dx12.h"
 #include "DlssNr_Status.h"
 #include "DlssNr_Placement.h"
+#include "DlssNrPipeline_Vk.h"
 #include <nvsdk_ngx_vk.h>
 #include "PassProfiles.h"
 
@@ -96,18 +97,9 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     if (state.failed)
         return false;
 
-    auto wrap = [](const VkImageInfo& image, bool readWrite)
-    {
-        NVSDK_NGX_Resource_VK resource {};
-        resource.Type = NVSDK_NGX_RESOURCE_VK_TYPE_VK_IMAGEVIEW;
-        resource.Resource.ImageViewInfo = { image.ImageView, image.Image, image.SubresourceRange,
-                                            image.Format,    image.Width, image.Height };
-        resource.ReadWrite = readWrite;
-        return resource;
-    };
-    auto colourResource = wrap(colourInfo, false);
-    auto depthResource = wrap(depthInfo, frame.DepthReadWrite);
-    auto motionResource = wrap(motionInfo, frame.MotionReadWrite);
+    auto colourResource = WrapImage(colourInfo, false);
+    auto depthResource = WrapImage(depthInfo, frame.DepthReadWrite);
+    auto motionResource = WrapImage(motionInfo, frame.MotionReadWrite);
     auto* colour = &colourResource;
     auto* depth = &depthResource;
     auto* motion = &motionResource;
@@ -434,8 +426,8 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     {
         Transition(cmdBuffer, *input, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         Transition(cmdBuffer, *answer, VK_IMAGE_LAYOUT_GENERAL);
-        auto inputResource = wrap(input->info, true);
-        auto answerResource = wrap(answer->info, true);
+        auto inputResource = WrapImage(input->info, true);
+        auto answerResource = WrapImage(answer->info, true);
         evaluated = EvaluateModel(cmdBuffer, pass, &inputResource, depth, motion, &answerResource,
                                   workWidth, workHeight, guides, depthInverted, mvX, mvY, cfg);
         if (evaluated != NVSDK_NGX_Result_Success)

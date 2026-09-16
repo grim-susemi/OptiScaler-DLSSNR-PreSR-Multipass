@@ -20,7 +20,7 @@ static bool same(Pixel a, Pixel b) {
     return std::abs(a.r-b.r)<0.0001f && std::abs(a.g-b.g)<0.0001f && std::abs(a.b-b.b)<0.0001f && a.a==b.a;
 }
 int wmain(int argc, wchar_t** argv) try {
-    if (argc != 2) throw std::runtime_error("Pass the dlssnr.hlsl path");
+    if (argc != 2 && argc != 3) throw std::runtime_error("Pass dlssnr.hlsl and optionally a baseline CSO");
     static_assert(offsetof(DlssNrConstants, SkinProtection) == 92);
     static_assert(offsetof(DlssNrConstants, EnvironmentColour) == 112);
     ComPtr<ID3DBlob> code, errors;
@@ -194,5 +194,47 @@ int wmain(int argc, wchar_t** argv) try {
     expect(std::abs(velocity.r-edited[1].r*2)<.0001f && std::abs(velocity.g-edited[1].g*3)<.0001f,
            "Private motion active region or pixel scale");
     std::puts("PASS: DLSS proxy carrier, matched reconstruction, neutral identity, depth/motion regions and scale");
+    settings = {}; settings.Mode = DlssNrMode_Meter; settings.Width = 2; settings.Height = 1;
+    result = run();
+    expect(result[0].r == base[0].r && result[1].r == 0, "Meter exposure or unused texels changed");
+    if (argc == 3)
+    {
+        ComPtr<ID3DBlob> baselineCode;
+        check(D3DReadFileToBlob(argv[2], &baselineCode));
+        ComPtr<ID3D11ComputeShader> baseline;
+        check(device->CreateComputeShader(baselineCode->GetBufferPointer(), baselineCode->GetBufferSize(), nullptr,
+                                          &baseline));
+        for (unsigned mode = 0; mode <= 10; ++mode)
+            for (unsigned variant = 0; variant < 96; ++variant)
+            {
+                settings = {}; settings.Mode = mode; settings.Width = variant % 2 + 1; settings.Height = 1;
+                settings.WhitePoint = .25f + (variant % 8) * .5f;
+                settings.TransferStrength = (variant % 5) * .5f;
+                settings.ColourStrength = variant % 5;
+                settings.ReversibleMode = variant % 5; settings.Passthrough = variant % 2;
+                settings.ApplyModel = variant % 3 != 0; settings.Transfer = (variant / 3) % 3;
+                settings.DebugView = (variant / 2) % 4; settings.DebugScale = 1;
+                settings.CompareMode = (variant / 4) % 3; settings.CompareSplit = .5f;
+                settings.CompareZoom = variant % 2 + 1; settings.CompareSwap = (variant / 7) % 2;
+                settings.MaxRatio = variant % 4 + 1; settings.ExposurePreMul = 1;
+                settings.UseGameExposure = variant % 2; settings.GuideWidth = settings.GuideHeight = 1;
+                settings.SkinProtection = variant % 2;
+                settings.SkinDetail = settings.SkinColour = settings.EnvironmentDetail = settings.EnvironmentColour = .5f;
+                if (mode == DlssNrMode_ResizePrivateGuides)
+                {
+                    settings.TransferStrength = settings.ColourStrength = 1;
+                    settings.DebugView = settings.CompareMode = settings.CompareSwap = settings.Transfer = 0;
+                }
+                ctx->CSSetShader(baseline.Get(), nullptr, 0);
+                const auto previous = run();
+                ctx->CSSetShader(productionShader.Get(), nullptr, 0);
+                const auto current = run();
+                // Only unused meter texels intentionally differ; every consumed value must match exactly.
+                const unsigned pixels = mode == DlssNrMode_Meter ? 1 : settings.Width;
+                expect(std::memcmp(previous.data(), current.data(), pixels * sizeof(Pixel)) == 0,
+                       "A consumed shader output changed relative to the baseline");
+            }
+        std::puts("PASS: 1,056 production/baseline dispatches match bit-for-bit for all consumed outputs");
+    }
     return 0;
 } catch (const std::exception& e) { std::fprintf(stderr,"FAIL: %s\n",e.what()); return 1; }

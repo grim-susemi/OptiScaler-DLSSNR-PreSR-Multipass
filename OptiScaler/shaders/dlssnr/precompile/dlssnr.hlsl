@@ -525,40 +525,9 @@ void CSMain(uint3 id : SV_DispatchThreadID)
 
     if (gMode == 3)
     {
-        // Texel (0,0) reads the game exposure from the motion SRV slot; remaining texels hold tile means.
-        if (id.x == 0 && id.y == 0)
-        {
-            gTarget[id.xy] = float4(gMotion.Load(int3(0, 0, 0)).r, 0.0, 0.0, 1.0);
-            return;
-        }
-
-        uint fullW, fullH;
-        gSource.GetDimensions(fullW, fullH);
-
-        const uint tx0 = (uint) (((float) id.x * (float) fullW) / (float) gWidth);
-        const uint tx1 = (uint) (((float) (id.x + 1) * (float) fullW) / (float) gWidth);
-        const uint ty0 = (uint) (((float) id.y * (float) fullH) / (float) gHeight);
-        const uint ty1 = (uint) (((float) (id.y + 1) * (float) fullH) / (float) gHeight);
-
-        // A tile of a 4K frame is 60x34 pixels. Sampling a bounded number of them is within a percent
-        // of the true mean and keeps the pass flat regardless of resolution.
-        const uint stepX = max((tx1 - tx0) / 8u, 1u);
-        const uint stepY = max((ty1 - ty0) / 8u, 1u);
-
-        float sum = 0.0;
-        uint taken = 0;
-
-        for (uint ty = ty0; ty < max(ty1, ty0 + 1u); ty += stepY)
-        {
-            for (uint tx = tx0; tx < max(tx1, tx0 + 1u); tx += stepX)
-            {
-                float3 c = max(gSource.Load(int3(min(tx, fullW - 1u), min(ty, fullH - 1u), 0)).rgb, 0.0);
-                sum += dot(c, kLuma);
-                taken++;
-            }
-        }
-
-        gTarget[id.xy] = float4(taken > 0u ? sum / (float) taken : 0.0, 0.0, 0.0, 1.0);
+        // Both backends consume only the game-exposure sample at (0,0).
+        float exposure = (id.x == 0 && id.y == 0) ? gMotion.Load(int3(0, 0, 0)).r : 0.0;
+        gTarget[id.xy] = float4(exposure, 0.0, 0.0, 1.0);
         return;
     }
 

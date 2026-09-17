@@ -1,6 +1,5 @@
 #pragma once
 
-#include <dlssnr/DlssNr_ModelParameters.h>
 #include <upscalers/ShaderPipeline_Vk.h>
 #include <shaders/dlssnr/DlssNr_Vk.h>
 #include <nvsdk_ngx.h>
@@ -65,13 +64,22 @@ inline DlssNrFrameInfo_Vk FrameInfo(NVSDK_NGX_Parameter* parameters, bool before
     int reset = 0;
     parameters->Get(NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags, &flags);
     parameters->Get(NVSDK_NGX_Parameter_Reset, &reset);
-    DlssNr::ReadModelGuides(parameters, flags, frame);
+    frame.DepthInverted = (flags & NVSDK_NGX_DLSS_Feature_Flags_DepthInverted) != 0;
+    frame.MotionVectorsLowResolution = (flags & NVSDK_NGX_DLSS_Feature_Flags_MVLowRes) != 0;
     frame.ColourIsLinearHdr = (flags & NVSDK_NGX_DLSS_Feature_Flags_IsHDR) != 0;
     frame.Reset = reset != 0;
     frame.BeforeUpscale = beforeUpscale;
+    parameters->Get(NVSDK_NGX_Parameter_MV_Scale_X, &frame.MvScaleX);
+    parameters->Get(NVSDK_NGX_Parameter_MV_Scale_Y, &frame.MvScaleY);
     parameters->Get(NVSDK_NGX_Parameter_DLSS_Pre_Exposure, &frame.PreExposure);
+    parameters->Get(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Width, &frame.RenderSubrectWidth);
+    parameters->Get(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Height, &frame.RenderSubrectHeight);
     parameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Color_Subrect_Base_X, &frame.ColorSubrectBaseX);
     parameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Color_Subrect_Base_Y, &frame.ColorSubrectBaseY);
+    parameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Depth_Subrect_Base_X, &frame.DepthSubrectBaseX);
+    parameters->Get(NVSDK_NGX_Parameter_DLSS_Input_Depth_Subrect_Base_Y, &frame.DepthSubrectBaseY);
+    parameters->Get(NVSDK_NGX_Parameter_DLSS_Input_MV_SubrectBase_X, &frame.MotionSubrectBaseX);
+    parameters->Get(NVSDK_NGX_Parameter_DLSS_Input_MV_SubrectBase_Y, &frame.MotionSubrectBaseY);
     const auto output = ParameterImage(parameters, NVSDK_NGX_Parameter_Output);
     frame.OutputWidth = output.Width;
     frame.OutputHeight = output.Height;
@@ -106,8 +114,10 @@ inline VkImageInfo PrepareInput(DlssNr_Vk& shader, VkCommandBuffer cmd, VkInstan
     if (!scratch.Image)
         return {};
     frame.BeforeUpscale = true;
-    if (shader.Dispatch(cmd, colour, depth, motion, scratch, frame, instance,
-                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
+    ShaderPipeline_Vk pipeline;
+    pipeline.push_back(MakePass(shader, cmd, instance, depth, motion, frame, colour));
+    SetupShaderPipeline(pipeline, scratch);
+    if (pipeline.front().inputBuffer.Image && DispatchShaderPipeline(pipeline))
         return scratch;
     return {};
 }

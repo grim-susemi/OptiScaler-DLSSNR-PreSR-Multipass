@@ -46,13 +46,12 @@ auto DlssNr_Dx12::State::DeferredSrContext::Float(NVSDK_NGX_Parameter* p, const 
 
 auto DlssNr_Dx12::State::DeferredSrContext::Allocate(Generation& g) -> bool
 {
-    auto* device = g.device.Get();
-    g.edited = owner.CreateScratch(device, g.inputFormat, g.w, g.h);
-    g.residualInput = owner.CreateScratch(device, DXGI_FORMAT_R16G16B16A16_FLOAT, g.w, g.h);
-    g.residualOutput = owner.CreateScratch(device, DXGI_FORMAT_R16G16B16A16_FLOAT, g.outW, g.outH);
-    g.clean = owner.CreateScratch(device, g.outputFormat, g.outW, g.outH);
-    g.composed = owner.CreateScratch(device, g.outputFormat, g.outW, g.outH);
-    g.exposure = owner.CreateScratch(device, DXGI_FORMAT_R32_FLOAT, 1, 1);
+    g.edited = owner.CreateScratch(g.device, g.inputFormat, g.w, g.h);
+    g.residualInput = owner.CreateScratch(g.device, DXGI_FORMAT_R16G16B16A16_FLOAT, g.w, g.h);
+    g.residualOutput = owner.CreateScratch(g.device, DXGI_FORMAT_R16G16B16A16_FLOAT, g.outW, g.outH);
+    g.clean = owner.CreateScratch(g.device, g.outputFormat, g.outW, g.outH);
+    g.composed = owner.CreateScratch(g.device, g.outputFormat, g.outW, g.outH);
+    g.exposure = owner.CreateScratch(g.device, DXGI_FORMAT_R32_FLOAT, 1, 1);
     if (!g.edited || !g.residualInput || !g.residualOutput || !g.clean || !g.composed || !g.exposure)
         return false;
     if (g.rayReconstruction)
@@ -60,24 +59,60 @@ auto DlssNr_Dx12::State::DeferredSrContext::Allocate(Generation& g) -> bool
         // Signed scene-linear history, before the nonlinear private-upscaler carrier encoding.
         for (auto& history : g.accumulatedEdit)
         {
-            history = owner.CreateScratch(device, DXGI_FORMAT_R32G32B32A32_FLOAT, g.w, g.h);
+            history = owner.CreateScratch(g.device, DXGI_FORMAT_R32G32B32A32_FLOAT, g.w, g.h);
             if (!history) return false;
         }
         LOG_INFO("DLSS-NR: motion-reprojected RR residual accumulation enabled at {}x{} before private upscaling",
                  g.w, g.h);
     }
-    g.codec = std::make_unique<DlssNr_Dx12>("Deferred NR contribution", device);
-    return g.codec->IsInit();
+    g.codec = std::make_unique<DlssNr_Dx12>("Deferred NR contribution", g.device);
+    if (!g.codec->IsInit())
+        return false;
+    D3D12_QUERY_HEAP_DESC query {};
+    query.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+    query.Count = MarkerCount;
+    if (FAILED(g.device->CreateQueryHeap(&query, IID_PPV_ARGS(&g.queries))))
+        return false;
+    auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK);
+    auto desc = CD3DX12_RESOURCE_DESC::Buffer(MarkerCount * sizeof(UINT64));
+    if (FAILED(g.device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                 D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                 IID_PPV_ARGS(&g.readback))))
+        return false;
+    void* mapped = nullptr;
+    if (FAILED(g.readback->Map(0, nullptr, &mapped)))
+        return false;
+    g.completed = static_cast<volatile UINT64*>(mapped);
+    for (unsigned i = 0; i < MarkerCount; ++i)
+        g.completed[i] = 0;
+    return true;
 }
 
 auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cmd, NVSDK_NGX_Parameter* source, unsigned long long epoch,
                     unsigned long long submittedEpoch, ID3D12CommandQueue* queue, bool interop, bool rayReconstruction) -> void
 {
-    const bool reset = pending.cmd || !current || current->reset;
+    if (pending.cmd && current)
+    {
+        LOG_DEBUG(
+            "DLSS-NR deferred: Before entry with a stale pending (previous After never ran) -> reset. epoch {}",
+            epoch);
+        current->reset = true; // abandoned/failed main SR call
+    }
     pending = {};
-    // Any gap resets history; restore the previous reset state only after arming a valid pair.
-    if (current)
-        current->reset = true;
+    struct ResetOnGap
+    {
+        DeferredSrContext& state;
+        unsigned long long epoch;
+        ~ResetOnGap()
+        {
+            if (!state.pending.cmd && state.current)
+            {
+                LOG_DEBUG("DLSS-NR deferred: Before returned without arming a seam; reset history. epoch {}",
+                          epoch);
+                state.current->reset = true;
+            }
+        }
+    } resetOnGap { *this, epoch };
     lifetime.Collect();
     const auto& cfg = *Config::Instance();
     if (cfg.DlssNrDebugView.value_or_default() != 0 ||
@@ -125,17 +160,21 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
         Say("inactive: unsupported active input/output dimensions");
         return;
     }
-    Microsoft::WRL::ComPtr<ID3D12Device> device;
+    ID3D12Device* device = nullptr;
     if (FAILED(cmd->GetDevice(IID_PPV_ARGS(&device))))
         return;
     auto* ownerQueue = queue ? queue : (ID3D12CommandQueue*) ::State::Instance().currentCommandQueue;
-    Microsoft::WRL::ComPtr<ID3D12Device> queueDevice;
+    ID3D12Device* queueDevice = nullptr;
     if (!ownerQueue || ownerQueue->GetDesc().Type != D3D12_COMMAND_LIST_TYPE_DIRECT ||
         FAILED(ownerQueue->GetDevice(IID_PPV_ARGS(&queueDevice))) || queueDevice != device)
     {
+        if (queueDevice)
+            queueDevice->Release();
+        device->Release();
         Say("waiting for a same-device direct queue identity");
         return;
     }
+    queueDevice->Release();
     unsigned flags = (owner.featureFlags ? owner.featureFlags
                                          : UInt(source, NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags)) &
                      (NVSDK_NGX_DLSS_Feature_Flags_DepthInverted | NVSDK_NGX_DLSS_Feature_Flags_MVLowRes |
@@ -152,7 +191,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
                     (privateRr && (current->frame.rr.roughnessMode != rrInputs.roughnessMode ||
                                    current->frame.rr.hardwareDepth != rrInputs.hardwareDepth)) ||
                     current->finishedPicture != cfg.DlssNrFinishedPicture.value_or_default() ||
-                    current->backend != backend || current->device != device || current->queue.Get() != ownerQueue ||
+                    current->backend != backend || current->device != device || current->queue != ownerQueue ||
                     current->w != active->width ||
                     current->h != active->height || current->outW != outDesc.Width ||
                     current->outH != outDesc.Height || current->inputFormat != inDesc.Format ||
@@ -165,12 +204,14 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
     {
         if (retiredCount >= 4)
         {
+            device->Release();
             Say("waiting for retired GPU work; clean SR frame retained");
             return;
         }
         current = std::make_unique<Generation>();
-        current->device = device;
+        current->device = device; // take the GetDevice reference
         current->queue = ownerQueue;
+        ownerQueue->AddRef();
         current->w = active->width;
         current->h = active->height;
         current->outW = (unsigned) outDesc.Width;
@@ -192,6 +233,8 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
             return;
         }
     }
+    else
+        device->Release();
     auto& g = *current;
     g.frame.rr = rrInputs; // Own matrix values before the game's evaluate can rewrite its parameter table.
     // These guides arrive in the game's NGX readable state. Account for aliases of the basic inputs.
@@ -208,6 +251,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
     // so a second upscale in the same bridge submission is still rejected.
     if (g.began && g.lastBeginEpoch == epoch)
     {
+        g.reset = true;
         Say("inactive: more than one upscale in a submission epoch");
         return;
     }
@@ -215,6 +259,12 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
     g.lastBeginEpoch = epoch;
     owner.lifetime.Record(cmd);
     lifetime.Record(cmd);
+    Use use(g, cmd);
+    if (!use.valid)
+    {
+        Say("waiting for GPU completion slots; clean SR frame retained");
+        return;
+    }
     if (!g.upscaler)
     {
         ScopedNrStateEnvelope envelope(cmd);
@@ -236,7 +286,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
                  g.privateRr ? "DLSS RR" : DlssNr::PrivateUpscalerName(g.backend),
                  info.width, info.height, info.outputWidth, info.outputHeight, info.quality,
                  info.depthInverted, info.jitteredMotion, info.lowResolutionMotion, info.roughnessMode, info.hardwareDepth);
-        if (!g.upscaler->Init(g.device.Get(), cmd, info))
+        if (!g.upscaler->Init(g.device, cmd, info))
         {
             g.failed = true;
             Say(std::string("private ") + g.upscaler->Name() +
@@ -246,14 +296,14 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
         DlssNrConstants unit {};
         unit.Mode = DlssNrMode_UnitExposure;
         unit.Width = unit.Height = 1;
-        if (!g.codec->DispatchPass(cmd, unit, g.edited, nullptr, nullptr, nullptr, g.exposure,
+        if (!g.codec->DispatchPass(cmd, unit, g.edited, nullptr, nullptr, nullptr, nullptr, g.exposure,
                                    nullptr))
         {
             g.failed = true;
             Say("private exposure initialization failed");
             return;
         }
-        Barrier(cmd, g.exposure, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        owner.Barrier(cmd, g.exposure, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         g.createEpoch = submittedEpoch;
         Say(std::string("private ") + g.upscaler->Name() +
@@ -269,16 +319,15 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
 
     const auto inputStates = DlssNr::ResolveInputStates_Dx12(interop);
     const auto arrival = inputStates.color;
-    DlssNr::ResourceStates_Dx12 resources { cmd };
-    resources.Set(color, D3D12_RESOURCE_STATE_COPY_SOURCE, arrival);
-    resources.Set(g.edited, D3D12_RESOURCE_STATE_COPY_DEST);
+    owner.Barrier(cmd, color, arrival, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    owner.Barrier(cmd, g.edited, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
     CopyActiveColor(cmd, g.edited, color, *active);
-    resources.Set(color, arrival);
-    resources.Read(g.edited);
+    owner.Barrier(cmd, color, D3D12_RESOURCE_STATE_COPY_SOURCE, arrival);
+    owner.Barrier(cmd, g.edited, D3D12_RESOURCE_STATE_COPY_DEST,
+                  D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
     DlssNrFrameInfo frame {};
-    frame.BeforeUpscale = true;
-    frame.OutputArrivalState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    frame.BeforeUpscale = frame.PrivateColorCopy = true;
     frame.RayReconstruction = rayReconstruction;
     frame.SubmissionEpoch = submittedEpoch;
     frame.RenderSubrectWidth = g.w;
@@ -292,14 +341,32 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
                              : UInt(source, NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags)) &
          NVSDK_NGX_DLSS_Feature_Flags_IsHDR) != 0 &&
         DlssNr::FormatCanHoldLinearHdr(outDesc.Format);
-    frame.Reset = UInt(source, NVSDK_NGX_Parameter_Reset) != 0 || reset;
+    frame.Reset = UInt(source, NVSDK_NGX_Parameter_Reset) != 0 || g.reset;
     frame.MvScaleX = Float(source, NVSDK_NGX_Parameter_MV_Scale_X, 1);
     frame.MvScaleY = Float(source, NVSDK_NGX_Parameter_MV_Scale_Y, 1);
     frame.PreExposure = std::max(Float(source, NVSDK_NGX_Parameter_DLSS_Pre_Exposure, 1), 1e-4f);
-    bool evaluated = false;
+    const auto before = owner.nr.successfulDispatches;
     {
         // Run consumes readable guides; restore their arrival states even when NR declines the frame.
-        DlssNr::ResourceStates_Dx12 restore { cmd };
+        struct RestoreGuides
+        {
+            State& owner;
+            ID3D12GraphicsCommandList* cmd;
+            std::vector<std::pair<ID3D12Resource*, D3D12_RESOURCE_STATES>> resources;
+            void Read(ID3D12Resource* resource, D3D12_RESOURCE_STATES state)
+            {
+                if (!resource || std::any_of(resources.begin(), resources.end(),
+                                             [resource](const auto& entry) { return entry.first == resource; }))
+                    return;
+                resources.emplace_back(resource, state);
+                owner.Barrier(cmd, resource, state, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            }
+            ~RestoreGuides()
+            {
+                for (auto it = resources.rbegin(); it != resources.rend(); ++it)
+                    owner.Barrier(cmd, it->first, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, it->second);
+            }
+        } restore { owner, cmd };
         auto read = [&](ID3D12Resource* resource, D3D12_RESOURCE_STATES state)
         {
             // A guide may alias Color. The game Color has already returned to its colour arrival state;
@@ -309,22 +376,23 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
         };
         read(depth, inputStates.depth);
         read(motion, inputStates.motion);
-        evaluated = owner.Run(cmd, g.edited, depth, motion, frame, queue);
+        owner.Run(cmd, g.edited, depth, motion, g.edited, frame, queue);
     }
+    const bool evaluated = owner.nr.successfulDispatches != before;
     if (evaluated)
     {
         ScopedNrStateEnvelope envelope(cmd);
         if (g.smallReadable)
-            Barrier(cmd, g.residualInput, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+            owner.Barrier(cmd, g.residualInput, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        resources.Read(color);
+        owner.Barrier(cmd, color, arrival, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         bool accumulated = true;
         if (g.rayReconstruction)
         {
             if (!g.accumulationReadable)
             {
                 for (auto* history : g.accumulatedEdit)
-                    Barrier(cmd, history, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                    owner.Barrier(cmd, history, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                                   D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                 g.accumulationReadable = true;
             }
@@ -335,9 +403,10 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
                                                  : DlssNr::GuideExtent { g.outW, g.outH }, 0, 0);
             const unsigned next = g.accumulatedIndex ^ 1u;
             auto* history = g.accumulatedEdit[next];
-            resources.Set(history, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                          D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            resources.Read(motion, inputStates.motion);
+            owner.Barrier(cmd, history, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                          D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            if (motion != color)
+                owner.Barrier(cmd, motion, inputStates.motion, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             DlssNrConstants accum {};
             accum.Mode = DlssNrResidualMode_Accumulate;
             accum.Width = g.w; accum.Height = g.h;
@@ -350,7 +419,10 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
             accum.MvScaleY = frame.MvScaleY / float(g.h);
             accumulated = motionRegion.valid() && g.codec->DispatchResidualPass(cmd, accum, color, g.edited,
                 g.accumulatedEdit[g.accumulatedIndex], motion, history);
-            resources.Read(history);
+            if (motion != color)
+                owner.Barrier(cmd, motion, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, inputStates.motion);
+            owner.Barrier(cmd, history, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                          D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             if (accumulated)
             {
                 // Rebuild a composed input at exactly the SAME resolution. The existing carrier
@@ -359,9 +431,11 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
                 DlssNrConstants compose {};
                 compose.Mode = DlssNrResidualMode_Apply;
                 compose.Width = g.w; compose.Height = g.h; compose.TransferStrength = 1;
-                resources.Set(g.edited, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                owner.Barrier(cmd, g.edited, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                              D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
                 accumulated = g.codec->DispatchResidualPass(cmd, compose, color, history, nullptr, nullptr, g.edited);
-                resources.Read(g.edited);
+                owner.Barrier(cmd, g.edited, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                              D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                 g.accumulatedIndex = next;
             }
             g.accumulationValid = accumulated;
@@ -375,6 +449,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
         if (!accumulated)
         {
             ok = false;
+            g.reset = true;
             Say("waiting for RR residual accumulation; clean game frame retained");
         }
         else if (cfg.DlssNrFinishedPicture.value_or_default())
@@ -387,14 +462,14 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
                                                true);
         }
         else
-            ok = g.codec->DispatchPass(cmd, encode, color, g.edited, nullptr, nullptr, g.residualInput,
+            ok = g.codec->DispatchPass(cmd, encode, color, g.edited, nullptr, nullptr, nullptr, g.residualInput,
                                        nullptr);
-        Barrier(cmd, g.residualInput, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        owner.Barrier(cmd, color, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, arrival);
+        owner.Barrier(cmd, g.residualInput, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         g.smallReadable = true;
         if (ok)
         {
-            g.reset = reset;
             // Snapshot before the main SR call can rewrite its parameter table.
             auto& f = g.frame;
             f.color = { g.residualInput, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE };
@@ -433,8 +508,11 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
     }
     else
     {
+        g.reset = true;
         Say("waiting for NR evaluation; clean SR frame retained");
     }
+    owner.Barrier(cmd, g.edited, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                  D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 }
 
 auto DlssNr_Dx12::State::DeferredSrContext::After(ID3D12GraphicsCommandList* cmd, NVSDK_NGX_Parameter* source, unsigned long long epoch) -> void
@@ -459,6 +537,13 @@ auto DlssNr_Dx12::State::DeferredSrContext::After(ID3D12GraphicsCommandList* cmd
     }
     owner.lifetime.Record(cmd);
     lifetime.Record(cmd);
+    Use use(g, cmd);
+    if (!use.valid)
+    {
+        g.reset = true;
+        Say("waiting for GPU completion slots; clean SR frame retained");
+        return;
+    }
     ScopedNrStateEnvelope envelope(cmd);
     if (!g.upscaler->Evaluate(cmd, g.frame))
     {
@@ -487,27 +572,29 @@ auto DlssNr_Dx12::State::DeferredSrContext::After(ID3D12GraphicsCommandList* cmd
         return; // The finished-picture path owns composition; the game's SR output stays clean.
     }
 
-    DlssNr::ResourceStates_Dx12 resources { cmd };
-    resources.Read(g.residualOutput);
+    owner.Barrier(cmd, g.residualOutput, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                  D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     const auto arrival = cfg.OutputResourceBarrier.has_value()
                              ? (D3D12_RESOURCE_STATES) cfg.OutputResourceBarrier.value()
                              : D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-    resources.Set(pair.output, D3D12_RESOURCE_STATE_COPY_SOURCE, arrival);
-    resources.Set(g.clean, D3D12_RESOURCE_STATE_COPY_DEST);
+    owner.Barrier(cmd, pair.output, arrival, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    owner.Barrier(cmd, g.clean, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
     cmd->CopyResource(g.clean, pair.output);
-    resources.Read(g.clean);
+    owner.Barrier(cmd, g.clean, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     DlssNrConstants apply {};
     apply.Mode = DlssNrMode_ApplyResidual;
     apply.Width = g.outW;
     apply.Height = g.outH;
     apply.ResidualScale = pair.scale;
-    const bool ok = g.codec->DispatchPass(cmd, apply, g.clean, g.residualOutput, nullptr, nullptr,
+    const bool ok = g.codec->DispatchPass(cmd, apply, g.clean, g.residualOutput, nullptr, nullptr, nullptr,
                                           g.composed, nullptr);
     if (ok)
     {
-        resources.Set(g.composed, D3D12_RESOURCE_STATE_COPY_SOURCE);
-        resources.Set(pair.output, D3D12_RESOURCE_STATE_COPY_DEST);
+        owner.Barrier(cmd, g.composed, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        owner.Barrier(cmd, pair.output, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
         cmd->CopyResource(pair.output, g.composed);
+        owner.Barrier(cmd, pair.output, D3D12_RESOURCE_STATE_COPY_DEST, arrival);
+        owner.Barrier(cmd, g.composed, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         Say("running: " + std::to_string(g.w) + "x" + std::to_string(g.h) +
             " contribution -> private " + g.upscaler->Name() + " -> " +
             std::to_string(g.outW) + "x" + std::to_string(g.outH) +
@@ -515,9 +602,14 @@ auto DlssNr_Dx12::State::DeferredSrContext::After(ID3D12GraphicsCommandList* cmd
     }
     else
     {
+        owner.Barrier(cmd, pair.output, D3D12_RESOURCE_STATE_COPY_SOURCE, arrival);
         g.reset = true;
         Say("composition failed; clean frame retained");
     }
+    owner.Barrier(cmd, g.clean, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                  D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    owner.Barrier(cmd, g.residualOutput, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                  D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 }
 
 auto DlssNr_Dx12::State::DeferredSrContext::ReleaseResources() -> void

@@ -9,15 +9,63 @@ auto DlssNr_Dx12::State::ParkNrResource(ID3D12Resource*& resource) -> void
     lifetime.Retire([retired] { retired->Release(); });
 }
 
+auto DlssNr_Dx12::State::ReleaseSurfacesIfFormatChanged(DXGI_FORMAT needed) -> void
+{
+    if (nr.output == nullptr || nr.output->GetDesc().Format == needed)
+        return;
+
+    LOG_INFO("DLSS-NR rebuilding surfaces: format {} -> {} (inject point changed)",
+             (int) nr.output->GetDesc().Format, (int) needed);
+
+    for (auto& model : nr.models)
+        model.RetryAfterFailure();
+    std::fill(std::begin(nr.passCreateFailed), std::end(nr.passCreateFailed), false);
+    modelRunning = false;
+
+    for (ID3D12Resource** r : { &nr.output, &nr.passScratch, &nr.passClamp, &nr.colorCopy, &nr.hdrCopy, &nr.colorSmall,
+                                &nr.outputNative, &nr.activeColor })
+        ParkNrResource(*r);
+
+    nr.passScratchFailed = false;
+
+    nr.reset = true;
+}
+
 auto DlssNr_Dx12::State::CreateScratch(ID3D12Device* device, DXGI_FORMAT format, unsigned int width, unsigned int height) -> ID3D12Resource*
 {
-    const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT, 0, 0);
-    const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(format, width, height, 1, 1, 1, 0,
-                                                D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    D3D12_HEAP_PROPERTIES heap {};
+    heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+    D3D12_RESOURCE_DESC desc {};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Width = width;
+    desc.Height = height;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.Format = format;
+    desc.SampleDesc.Count = 1;
+    desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    // The model writes its result, so the destination has to be a UAV.
+    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+
     ID3D12Resource* res = nullptr;
     device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                                     nullptr, IID_PPV_ARGS(&res));
     return res;
+}
+
+auto DlssNr_Dx12::State::Barrier(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* res, D3D12_RESOURCE_STATES from,
+                 D3D12_RESOURCE_STATES to) -> void
+{
+    if (from == to)
+        return;
+    D3D12_RESOURCE_BARRIER b {};
+    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    b.Transition.pResource = res;
+    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    b.Transition.StateBefore = from;
+    b.Transition.StateAfter = to;
+    cmdList->ResourceBarrier(1, &b);
 }
 
 auto DlssNr_Dx12::State::TypedGuideFormat(DXGI_FORMAT f) -> DXGI_FORMAT
@@ -45,6 +93,9 @@ auto DlssNr_Dx12::State::TypedGuideFormat(DXGI_FORMAT f) -> DXGI_FORMAT
     }
 }
 
+auto DlssNr_Dx12::State::IsTypeless(DXGI_FORMAT f) -> bool
+{ return TypedGuideFormat(f) != f; }
+
 auto DlssNr_Dx12::State::CreateGuideClone(ID3D12Device* device, ID3D12Resource* source) -> ID3D12Resource*
 {
     D3D12_RESOURCE_DESC desc = source->GetDesc();
@@ -60,29 +111,42 @@ auto DlssNr_Dx12::State::CreateGuideClone(ID3D12Device* device, ID3D12Resource* 
     return res;
 }
 
-auto DlssNr_Dx12::State::ReadableGuide(ID3D12Device* device, DlssNr::ResourceStates_Dx12& states,
-                                      ID3D12Resource* source, ID3D12Resource** clone) -> ID3D12Resource*
+auto DlssNr_Dx12::State::ReadableGuide(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList, ID3D12Resource* source,
+                                  ID3D12Resource** clone) -> ID3D12Resource*
 {
-    const auto want = source->GetDesc();
-    const auto format = TypedGuideFormat(want.Format);
-    if (format == want.Format)
+    if (source == nullptr || !IsTypeless(source->GetDesc().Format))
         return source;
 
-    // Dynamic resolution changes the copy shape; retire the old clone before replacing it.
-    if (*clone)
+    // A dynamic-resolution game reallocates its depth and motion vectors as the render size moves, so
+    // the clone made for the old size no longer matches -- and CopyResource demands identical
+    // dimensions. Copying a 1970x1108 source into a 984x554 clone is undefined and removes the device,
+    // which is the DRS crash. Rebuild the clone whenever the source's shape has changed under it.
+    if (*clone != nullptr)
     {
-        const auto have = (*clone)->GetDesc();
-        if (have.Width != want.Width || have.Height != want.Height || have.Format != format)
-            ParkNrResource(*clone);
-    }
-    if (!*clone)
-        *clone = CreateGuideClone(device, source);
-    if (!*clone)
-        return nullptr;
+        const D3D12_RESOURCE_DESC have = (*clone)->GetDesc();
+        const D3D12_RESOURCE_DESC want = source->GetDesc();
 
-    CopyTexture(states.commands, *clone, D3D12_RESOURCE_STATE_COPY_DEST,
-                source, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    states.Read(*clone, D3D12_RESOURCE_STATE_COPY_DEST);
+        if (have.Width != want.Width || have.Height != want.Height || have.Format != TypedGuideFormat(want.Format))
+        {
+            // Retired, not released: the previous copy may still be in flight on the game's queue.
+            ParkNrResource(*clone);
+        }
+    }
+
+    if (*clone == nullptr)
+    {
+        *clone = CreateGuideClone(device, source);
+
+        if (*clone == nullptr)
+            return nullptr;
+
+        LOG_DEBUG("DLSS-NR cloned a typeless guide as format {}", (int) TypedGuideFormat(source->GetDesc().Format));
+    }
+
+    Barrier(cmdList, source, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    cmdList->CopyResource(*clone, source);
+    Barrier(cmdList, source, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    Barrier(cmdList, *clone, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     return *clone;
 }
 
@@ -122,27 +186,28 @@ auto DlssNr_Dx12::State::ReleaseResources() -> void
 
     for (auto& model : nr.models)
         model.Release();
+    std::fill(std::begin(nr.passCreateFailed), std::end(nr.passCreateFailed), false);
     modelRunning = false;
 
     for (auto** resource : { &nr.output, &nr.passScratch, &nr.passClamp, &nr.colorCopy, &nr.hdrCopy,
-                             &nr.activeColor, &nr.colorSmall, &nr.outputNative, &nr.heldColor,
-                             &nr.depthClone, &nr.motionClone })
+                             &nr.activeColor, &nr.colorSmall })
         ParkNrResource(*resource);
+    nr.passScratchFailed = false;
 
     ReleaseSupersamplers();
+
+    ParkNrResource(nr.outputNative);
+
+    ParkNrResource(nr.heldColor);
+    nr.heldActive = false;
+
+    ParkNrResource(nr.depthClone);
+
+    ParkNrResource(nr.motionClone);
+
     captureFrames.release();
     if (auto* timer = gpuTime.release()) lifetime.Retire([timer] { delete timer; });
+    if (auto* timer = ngxTime.release()) lifetime.Retire([timer] { delete timer; });
+    lastNgxTime.reset();
     lastGpuTime.reset();
-}
-
-bool DlssNr_Dx12::ReadyToDestroy()
-{
-    std::lock_guard lock(_state->mutex);
-    if (!_state->enlargementLifetime.Idle()) return false;
-    if (!_state->lifetime.Idle() || !_state->deferredSr.lifetime.Idle()) return false;
-    for (auto& model : _state->nr.models)
-        if (!model.Idle()) return false;
-    for (const auto& slot : _state->late.slots)
-        if (slot.submitted && !_state->late.Finished(slot)) return false;
-    return true;
 }

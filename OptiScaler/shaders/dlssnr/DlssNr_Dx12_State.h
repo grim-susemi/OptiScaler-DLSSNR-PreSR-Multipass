@@ -1,4 +1,5 @@
 #pragma once
+#include "DlssNr_Dx12_ModelState.h"
 #include <dlssnr/DlssNr_Placement.h>
 #include <dlssnr/DlssNr_FinishedReady.h>
 #include <dlssnr/PassProfiles.h>
@@ -36,42 +37,29 @@
 #include <mutex>
 #include <algorithm>
 #include <cstring>
+#include "DlssNr_ResidualPair.h"
 #include "../output_scaling/OS_Dx12.h"
 
+
 using DlssNr::Profiles::PassSettings;
-using DlssNr::Barrier;
-using DlssNr::CopyTexture;
+
 
 struct DlssNr_Dx12::State
 {
 
-    struct ModelState
-    {
-        DlssNr::Proxy::Context models[DlssNr::MaxPassCount]; // Independent model histories.
-        // Immutable full-resolution inputs; working-resolution model outputs ping-pong through a clamp.
-        ID3D12Resource *colorCopy = nullptr, *hdrCopy = nullptr;
-        ID3D12Resource *output = nullptr, *passScratch = nullptr, *passClamp = nullptr;
-        ID3D12Resource* activeColor = nullptr; // Compact pre-SR raster when the game allocation is padded.
-        ID3D12Resource* colorSmall = nullptr;
+    // NGX result names for diagnostics.
+    const char* NgxResultName(unsigned int r);
 
-        // Optional supersampling filters and their native-resolution result.
-        OS_Dx12 *superUp = nullptr, *superDown = nullptr;
-        ID3D12Resource* outputNative = nullptr;
-        Scaler nrScaler = Scaler::Count;
 
-        ID3D12Resource* heldColor = nullptr;
-        float heldWhitePoint = 1.0f;
-        ID3D12Resource *depthClone = nullptr, *motionClone = nullptr; // Typed copies for NGX.
-        unsigned width = 0, height = 0, workWidth = 0, workHeight = 0;
-        bool beforeUpscale = false, rayReconstruction = false, reset = true;
-        bool failed = false; // Latched until retry.
-        const char* reason = "";
-    } nr;
+
+    using NrState = DlssNr::Detail::ModelStateDx12;
+    NrState nr;
     DlssNr_Dx12& shader;
     struct Enlarger
     {
         template <typename T> using ComPtr = Microsoft::WRL::ComPtr<T>;
         std::unique_ptr<DlssNr::PrivateUpscalerDx12> dlss;
+        DlssNr::GpuLifetime lifetime;
         ComPtr<ID3D12Resource> input, output, depth, motion, exposure;
         ComPtr<ID3D12CommandQueue> queue;
         ID3D12CommandList* creation = nullptr;
@@ -81,17 +69,21 @@ struct DlssNr_Dx12::State
         ~Enlarger() { dlss.reset(); } // Release NGX before its borrowed input/output resources.
     };
     std::unique_ptr<Enlarger> enlarger;
-    DlssNr::GpuLifetime enlargementLifetime;
-    unsigned retiredEnlargers = 0;
+    std::vector<std::unique_ptr<Enlarger>> retiredEnlargers;
+    bool collectingEnlargers = false;
     std::string enlargementStatus;
     void ReleaseEnlarger();
-    ID3D12Resource* EnlargeMatchedResidual(ID3D12GraphicsCommandList* cmd, ID3D12Resource* proxy,
-        const DlssNr::Proxy::Frame& modelFrame, const DlssNrFrameInfo& frame,
-        const DlssNrConstants& resolve, ID3D12CommandQueue* queue);
+    void CollectEnlargers();
+    ID3D12Resource* EnlargeMatchedResidual(ID3D12GraphicsCommandList* cmd, ID3D12Device* device,
+        ID3D12Resource* proxy, ID3D12Resource* answer, ID3D12Resource* depth, ID3D12Resource* motion,
+        const DlssNrFrameInfo& frame, const DlssNrConstants& resolve, bool reset, ID3D12CommandQueue* queue);
 
     // What the pass costs on the GPU, for the breakdown in the overlay.
     std::unique_ptr<DlssNrGpuTime> gpuTime;
 
+    // Model-only timing separates NGX cost from encoding, copies and composition.
+    std::unique_ptr<DlssNrGpuTime> ngxTime;
+    std::optional<double> lastNgxTime;
     std::optional<double> lastGpuTime;
 
     // Writes matched before/after frames on request, so comparisons stop depending on video.
@@ -142,26 +134,34 @@ struct DlssNr_Dx12::State
 
     void ParkNrResource(ID3D12Resource*& resource);
 
+    void ReleaseSurfacesIfFormatChanged(DXGI_FORMAT needed);
     void ReleaseSupersamplers();
 
     ID3D12Resource* CreateScratch(ID3D12Device* device, DXGI_FORMAT format, unsigned int width, unsigned int height);
+
+    void Barrier(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* res, D3D12_RESOURCE_STATES from,
+                 D3D12_RESOURCE_STATES to);
 
     // A typeless resource cannot be viewed, and NGX builds its own views with nothing to tell it which
     // format to use. Depth is very often declared typeless, so the typed member of the same family is
     // substituted; CopyResource accepts that as a destination for the typeless original.
     DXGI_FORMAT TypedGuideFormat(DXGI_FORMAT f);
 
+    bool IsTypeless(DXGI_FORMAT f);
+
     // Creates a typed twin of a guide buffer, matching everything but the format.
     ID3D12Resource* CreateGuideClone(ID3D12Device* device, ID3D12Resource* source);
 
     // Typeless guides are copied into a typed resource for NGX. The clone rests in COPY_DEST.
     // Return the original typed resource when no conversion is required.
-    ID3D12Resource* ReadableGuide(ID3D12Device* device, DlssNr::ResourceStates_Dx12& states,
-                                  ID3D12Resource* source, ID3D12Resource** clone);
+    ID3D12Resource* ReadableGuide(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList, ID3D12Resource* source,
+                                  ID3D12Resource** clone);
 
     // Try both SR and ray-reconstruction parameter names; absent values return null.
 
     ID3D12Resource* GetResource(NVSDK_NGX_Parameter* params, const char* a, const char* b);
+
+    bool TuningMatchesFeature(const Config& cfg, unsigned int requestedPasses);
 
     // Serialize rendering, presentation and submission callbacks; destruction can re-enter hooks.
     std::recursive_mutex mutex;
@@ -195,14 +195,19 @@ struct DlssNr_Dx12::State
         State& owner;
         explicit DeferredSrContext(State& state) : owner(state) {}
 
+        static constexpr unsigned MarkerCount = 16;
         struct Generation
         {
-            Microsoft::WRL::ComPtr<ID3D12Device> device;
-            Microsoft::WRL::ComPtr<ID3D12CommandQueue> queue; // identity/reference only; no private submissions
+            ID3D12Device* device = nullptr;
+            ID3D12CommandQueue* queue = nullptr; // identity/reference only; no private submissions
             unsigned w = 0, h = 0, outW = 0, outH = 0, flags = 0;
             DXGI_FORMAT inputFormat {}, outputFormat {};
             ID3D12Resource *edited = nullptr, *residualInput = nullptr, *residualOutput = nullptr, *clean = nullptr,
-                           *composed = nullptr, *exposure = nullptr;
+                           *composed = nullptr, *exposure = nullptr, *readback = nullptr;
+            ID3D12QueryHeap* queries = nullptr;
+            volatile UINT64* completed = nullptr;
+            bool occupied[MarkerCount] {};
+            unsigned nextMarker = 0;
             ID3D12Resource* accumulatedEdit[2] {};
             unsigned accumulatedIndex = 0;
             bool accumulationReadable = false, accumulationValid = false;
@@ -219,11 +224,45 @@ struct DlssNr_Dx12::State
             {
                 DlssNr_Dx12::Retire(std::move(codec));
                 upscaler.reset(); // Completion protects all four backend histories.
-                for (auto* r : { edited, residualInput, residualOutput, clean, composed, exposure })
+                if (readback && completed)
+                    readback->Unmap(0, nullptr);
+                for (auto* r : { edited, residualInput, residualOutput, clean, composed, exposure, readback })
                     if (r)
                         r->Release();
                 for (auto* r : accumulatedEdit)
                     if (r) r->Release();
+                if (queries)
+                    queries->Release();
+                if (queue)
+                    queue->Release();
+                if (device)
+                    device->Release();
+            }
+        };
+
+        // Preserve v0.8.4's recording limit as well as GPU-safe generation retirement.
+        struct Use
+        {
+            Generation& g;
+            ID3D12GraphicsCommandList* cmd;
+            unsigned slot;
+            bool valid;
+            Use(Generation& gen, ID3D12GraphicsCommandList* commands) : g(gen), cmd(commands), slot(g.nextMarker)
+            {
+                valid = !g.occupied[slot] || g.completed[slot] != 0;
+                if (!valid)
+                    return;
+                g.completed[slot] = 0;
+                g.occupied[slot] = true;
+                g.nextMarker = (slot + 1) % MarkerCount;
+            }
+            ~Use()
+            {
+                if (!valid)
+                    return;
+                cmd->EndQuery(g.queries, D3D12_QUERY_TYPE_TIMESTAMP, slot);
+                cmd->ResolveQueryData(g.queries, D3D12_QUERY_TYPE_TIMESTAMP, slot, 1, g.readback,
+                                      slot * sizeof(UINT64));
             }
         };
 
@@ -256,6 +295,7 @@ struct DlssNr_Dx12::State
         void ReleaseResources();
     };
     DeferredSrContext deferredSr { *this };
+
 
     struct LateContext
     {
@@ -324,6 +364,8 @@ struct DlssNr_Dx12::State
 
     bool WaitForFinishedPicture();
 
+    std::string FinishedPictureStatus();
+
     void FinishedPictureSubmitted(ID3D12CommandQueue* queue, UINT count, ID3D12CommandList* const* lists);
 
     DXGI_COLOR_SPACE_TYPE FinishedColorSpace(IDXGISwapChain* swapchain, DXGI_FORMAT format);
@@ -339,25 +381,84 @@ struct DlssNr_Dx12::State
                           const DlssNrFrameInfo& frame, const D3D12_RESOURCE_DESC& desc,
                           DlssNr::ColorExtent native, DlssNr::ColorExtent work,
                           float workScale, unsigned int requestedPasses);
-    float HoldColor(ID3D12GraphicsCommandList* cmd, ID3D12Device* device, ID3D12Resource* target,
-                    D3D12_RESOURCE_STATES state, float whitePoint);
+    struct EncodeContext
+    {
+        ID3D12GraphicsCommandList* cmdList;
+        ID3D12Device* device;
+        ID3D12Resource* target;
+        D3D12_RESOURCE_STATES targetState;
+        const DlssNrFrameInfo& frame;
+        float workScale;
+        bool targetSupportsUav;
+        float whitePoint = 1.0f;
+        ID3D12Resource* modelInput = nullptr;
+    };
+    void EncodeInput(EncodeContext& context);
+    DlssNrConstants MakeResolveConstants(const EncodeContext& context, unsigned int effectivePasses);
     void EndGpuTiming(ID3D12GraphicsCommandList* cmdList);
 
-    bool Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* target, ID3D12Resource* depth, ID3D12Resource* motion,
-             const DlssNrFrameInfo& frame, ID3D12CommandQueue* timingQueue);
+    void Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* colour, ID3D12Resource* depth, ID3D12Resource* motion,
+             ID3D12Resource* output, const DlssNrFrameInfo& frame, ID3D12CommandQueue* timingQueue);
+
+    std::string DeferredDlssStatus();
+
+    void RetryAfterFailure();
+
+    // Adapt the game's NGX parameters into the explicit NR frame contract.
+    void EvaluateInternal(ID3D12GraphicsCommandList* cmdList, NVSDK_NGX_Parameter* params, bool beforeUpscale,
+                          ID3D12CommandQueue* timingQueue, bool rayReconstruction, unsigned long long submissionEpoch,
+                          bool interop);
 
     void ReleaseResources();
 
+    struct GuideReport
+    {
+        bool valid;
+        bool depthInverted;
+        float mvScaleX;
+        float mvScaleY;
+        unsigned int guideW;
+        unsigned int guideH;
+        unsigned int frameW;
+        unsigned int frameH;
+        bool operator==(const GuideReport&) const = default;
+    };
+    GuideReport loggedGuides {};
+    struct ComposeReport
+    {
+        bool valid;
+        float whitePoint;
+        float transfer;
+        float colour;
+        float maxRatio;
+        unsigned int passthrough;
+        unsigned int debugView;
+        unsigned int compareMode;
+        unsigned int residual;
+        unsigned int workW;
+        unsigned int workH;
+        unsigned int passes;
+        bool operator==(const ComposeReport&) const = default;
+    };
+    ComposeReport loggedCompose {};
+
     std::set<std::string> seen;
+    unsigned long long resets = 0;
+    bool reportedHdr = false;
+    bool reportedHdrValue = false;
+    bool reportedBefore = false;
     bool warnedSuper = false;
     unsigned int loggedConfigured = 0;
+    unsigned int loggedEffective = 0;
+    unsigned int lastSuper = 0;
+    unsigned long long lastSplitLog = 0;
     unsigned lastFinishedMode = 0;
 
     bool modelRunning = false;
     ID3D12Resource* buffer = nullptr;
     D3D12_RESOURCE_STATES bufferState = D3D12_RESOURCE_STATE_COMMON;
     uint32_t featureFlags = 0;
-    uint64_t retryGeneration = DlssNr::RetryGeneration();
+    DlssNr::ControlRequests controls = DlssNr::ReadControlRequests();
     explicit State(DlssNr_Dx12& owner) : shader(owner) {}
     void ConsumeControls();
     void Publish();

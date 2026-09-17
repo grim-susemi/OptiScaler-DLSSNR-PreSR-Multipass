@@ -84,6 +84,7 @@ auto DlssNr_Dx12::State::BeginInputHold(ID3D12GraphicsCommandList* cmd, NVSDK_NG
         ID3D12GraphicsCommandList* real = nullptr;
         if (Util::CheckForRealObject(__FUNCTION__, cmd, (IUnknown**) &real))
             inputHold.captureCommands = real;
+        nr.heldActive = false;
         ParkNrResource(nr.heldColor);
     }
     for (size_t i = 0; i < inputHold.textures.size(); ++i)
@@ -121,33 +122,4 @@ auto DlssNr_Dx12::State::CheckCaptureTrigger() -> void
         captureFrames.request(capture::kMaxFrames);
         LOG_INFO("DLSS-NR capture requested by trigger file");
     }
-}
-
-float DlssNr_Dx12::State::HoldColor(ID3D12GraphicsCommandList* cmd, ID3D12Device* device,
-                                     ID3D12Resource* target, D3D12_RESOURCE_STATES state, float whitePoint)
-{
-    if (!Config::Instance()->DlssNrHoldFrame.value_or_default())
-    {
-        ParkNrResource(nr.heldColor);
-        return whitePoint;
-    }
-    const auto want = target->GetDesc();
-    const auto have = nr.heldColor ? nr.heldColor->GetDesc() : D3D12_RESOURCE_DESC {};
-    if (!nr.heldColor || have.Width != want.Width || have.Height != want.Height || have.Format != want.Format)
-    {
-        ParkNrResource(nr.heldColor);
-        nr.heldColor = CreateScratch(device, want.Format, (unsigned) want.Width, want.Height);
-        if (!nr.heldColor)
-            return whitePoint;
-        // Capture once; the snapshot remains COPY_SOURCE until it is retired.
-        Barrier(cmd, target, state, D3D12_RESOURCE_STATE_COPY_SOURCE);
-        Barrier(cmd, nr.heldColor, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
-        cmd->CopyResource(nr.heldColor, target);
-        Barrier(cmd, nr.heldColor, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE);
-        Barrier(cmd, target, D3D12_RESOURCE_STATE_COPY_SOURCE, state);
-        nr.heldWhitePoint = whitePoint;
-    }
-    else
-        CopyTexture(cmd, target, state, nr.heldColor, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    return nr.heldWhitePoint;
 }

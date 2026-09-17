@@ -58,7 +58,6 @@ class PrivateUpscalerDx12
     PrivateUpscalerDx12(const PrivateUpscalerDx12&) = delete;
     PrivateUpscalerDx12& operator=(const PrivateUpscalerDx12&) = delete;
     bool Init(ID3D12Device* device, ID3D12GraphicsCommandList* cmd, const PrivateUpscalerCreateDx12& info);
-    // Requires successful Init and the owning generation's validated resources, extent and RR mode.
     bool Evaluate(ID3D12GraphicsCommandList* cmd, const PrivateUpscalerFrameDx12& frame);
     static PrivateRrInputsDx12 ReadRrInputs(NVSDK_NGX_Parameter* source, unsigned width, unsigned height);
     const char* Name() const;

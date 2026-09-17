@@ -126,8 +126,7 @@ try
     for (uint32_t pass = 0; pass < 2; ++pass)
     {
         // Production binding order: Source, Model, Original, Motion, Target, Keep, Sampler.
-        // Unread SRVs alias Source; the unread Keep UAV aliases Target, matching the codec adapter.
-        const uint32_t encode[] = { 0, 0, 0, 0, 1, 2, 0 }, resolve[] = { 1, 3, 2, 1, 4, 4, 1 };
+        const uint32_t encode[] = { 0, 3, 2, 5, 1, 2, 5 }, resolve[] = { 1, 3, 2, 5, 4, 5, 5 };
         VkDescriptorBufferInfo bi { uniforms[pass].buffer, 0, sizeof(DlssNrConstants) };
         std::array<VkDescriptorImageInfo, 7> ii {}; std::array<VkWriteDescriptorSet, 8> writes {};
         for (uint32_t b = 0; b < 8; ++b)

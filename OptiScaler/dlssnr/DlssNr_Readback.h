@@ -1,63 +1,27 @@
 #pragma once
-#include "../include/d3dx/d3dx12.h"
+#include <d3d12.h>
 #include <wrl/client.h>
 #include <filesystem>
 #include <fstream>
 #include <cstdint>
 #include <utility>
-#include <algorithm>
-#include <cstring>
 
 namespace DlssNr
 {
 inline bool CreateReadbackBuffer(ID3D12Device* device, UINT64 bytes, ID3D12Resource** result)
 {
-    const auto heap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK, 0, 0);
-    const auto desc = CD3DX12_RESOURCE_DESC::Buffer(bytes);
+    D3D12_HEAP_PROPERTIES heap {};
+    heap.Type = D3D12_HEAP_TYPE_READBACK;
+    D3D12_RESOURCE_DESC desc {};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    desc.Width = bytes;
+    desc.Height = 1;
+    desc.DepthOrArraySize = desc.MipLevels = 1;
+    desc.SampleDesc.Count = 1;
+    desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
     return SUCCEEDED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
         D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(result)));
 }
-
-// Mark executed capture copies. GPU lifetime/fence retirement must be established before reading.
-struct CaptureTimestamps
-{
-    Microsoft::WRL::ComPtr<ID3D12QueryHeap> query;
-    Microsoft::WRL::ComPtr<ID3D12Resource> readback;
-
-    bool Init(ID3D12Device* device, unsigned count)
-    {
-        D3D12_QUERY_HEAP_DESC desc { D3D12_QUERY_HEAP_TYPE_TIMESTAMP, count, 0 };
-        if (FAILED(device->CreateQueryHeap(&desc, IID_PPV_ARGS(&query))) ||
-            !CreateReadbackBuffer(device, count * sizeof(UINT64), &readback))
-            return false;
-        void* data = nullptr;
-        D3D12_RANGE empty {}, written { 0, count * sizeof(UINT64) };
-        if (FAILED(readback->Map(0, &empty, &data)))
-            return false;
-        std::memset(data, 0, written.End);
-        readback->Unmap(0, &written);
-        return true;
-    }
-    void Record(ID3D12GraphicsCommandList* commands, unsigned index)
-    {
-        commands->EndQuery(query.Get(), D3D12_QUERY_TYPE_TIMESTAMP, index);
-        commands->ResolveQueryData(query.Get(), D3D12_QUERY_TYPE_TIMESTAMP, index, 1,
-                                   readback.Get(), index * sizeof(UINT64));
-    }
-    // Return the last timestamp only when every requested copy executed. Zero marks a discarded recording.
-    UINT64 Completed(unsigned count) const
-    {
-        void* data = nullptr;
-        D3D12_RANGE range { 0, count * sizeof(UINT64) }, empty {};
-        if (FAILED(readback->Map(0, &range, &data)))
-            return 0;
-        const auto* values = static_cast<const UINT64*>(data);
-        const UINT64 last = std::all_of(values, values + count, [](UINT64 value) { return value != 0; })
-                                ? values[count - 1] : 0;
-        readback->Unmap(0, &empty);
-        return last;
-    }
-};
 
 inline DXGI_FORMAT TypedReadbackFormat(DXGI_FORMAT format)
 {
@@ -96,7 +60,13 @@ struct ReadbackImage
                                D3D12_RESOURCE_STATE_COPY_SOURCE };
         if (state != D3D12_RESOURCE_STATE_COPY_SOURCE)
             cmd->ResourceBarrier(1, &barrier);
-        const CD3DX12_TEXTURE_COPY_LOCATION from(source, 0), to(readback.Get(), layout);
+        D3D12_TEXTURE_COPY_LOCATION from {};
+        from.pResource = source;
+        from.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        D3D12_TEXTURE_COPY_LOCATION to {};
+        to.pResource = readback.Get();
+        to.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        to.PlacedFootprint = layout;
         cmd->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
         std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
         if (state != D3D12_RESOURCE_STATE_COPY_SOURCE)

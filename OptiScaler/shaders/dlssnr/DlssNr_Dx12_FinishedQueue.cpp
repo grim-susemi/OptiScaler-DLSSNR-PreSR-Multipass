@@ -15,7 +15,9 @@ auto DlssNr_Dx12::State::FinishedPictureResetCommandList(ID3D12CommandList* cmd)
     lifetime.ResetRecording(cmd);
     deferredSr.lifetime.ResetRecording(cmd);
     captureFrames.ResetRecording(cmd);
-    enlargementLifetime.ResetRecording(cmd);
+    if (enlarger) enlarger->lifetime.ResetRecording(cmd);
+    for (auto& old : retiredEnlargers) old->lifetime.ResetRecording(cmd);
+    CollectEnlargers();
     ID3D12CommandList* real = nullptr;
     auto* identity = Util::CheckForRealObject(__FUNCTION__, cmd, (IUnknown**)&real) ? real : cmd;
     if (enlarger && !enlarger->submitted && enlarger->creation == identity)
@@ -28,10 +30,12 @@ auto DlssNr_Dx12::State::FinishedPictureResetCommandList(ID3D12CommandList* cmd)
     {
         inputHold.active = false; // recording was discarded before submission
         inputHold.captureCommands = nullptr;
-        ParkNrResource(nr.heldColor);
+        nr.heldActive = false;
     }
     if (gpuTime)
         gpuTime->ResetRecording(cmd);
+    if (ngxTime)
+        ngxTime->ResetRecording(cmd);
     if (!late.tracking.load())
         return;
     for (auto& slot : late.slots)
@@ -65,13 +69,21 @@ auto DlssNr_Dx12::State::WaitForFinishedPicture() -> bool
     return late.dx11.Drain();
 }
 
+auto DlssNr_Dx12::State::FinishedPictureStatus() -> std::string
+{
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    return late.status;
+}
+
 auto DlssNr_Dx12::State::FinishedPictureSubmitted(ID3D12CommandQueue* queue, UINT count, ID3D12CommandList* const* lists) -> void
 {
     std::lock_guard<std::recursive_mutex> lock(mutex);
     lifetime.Submitted(queue, count, lists);
     deferredSr.lifetime.Submitted(queue, count, lists);
     captureFrames.Submitted(queue, count, lists);
-    enlargementLifetime.Submitted(queue, count, lists);
+    if (enlarger) enlarger->lifetime.Submitted(queue, count, lists);
+    for (auto& old : retiredEnlargers) old->lifetime.Submitted(queue, count, lists);
+    CollectEnlargers();
     if (enlarger && !enlarger->submitted)
     {
         ID3D12CommandQueue* real = nullptr;
@@ -94,6 +106,8 @@ auto DlssNr_Dx12::State::FinishedPictureSubmitted(ID3D12CommandQueue* queue, UIN
             inputHold.captureCommands = nullptr;
     if (gpuTime)
         gpuTime->Submitted(queue, count, lists);
+    if (ngxTime)
+        ngxTime->Submitted(queue, count, lists);
     if (!late.tracking.load())
         return;
     for (auto& slot : late.slots)

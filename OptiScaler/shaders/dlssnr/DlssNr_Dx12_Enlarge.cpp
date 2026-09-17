@@ -4,21 +4,28 @@
 void DlssNr_Dx12::State::ReleaseEnlarger()
 {
     if (!enlarger) return;
-    auto* retired = enlarger.release();
-    ++retiredEnlargers;
-    enlargementLifetime.Retire([this, retired]
-    {
-        delete retired;
-        --retiredEnlargers;
-    });
-    enlargementLifetime.BeginGeneration();
+    retiredEnlargers.push_back(std::move(enlarger));
+    CollectEnlargers();
+}
+
+void DlssNr_Dx12::State::CollectEnlargers()
+{
+    if (collectingEnlargers) return;
+    collectingEnlargers = true;
+    // Release NGX only after container mutation: its destruction can re-enter queue hooks.
+    std::vector<std::unique_ptr<Enlarger>> completed;
+    for (auto& old : retiredEnlargers)
+        if (old->lifetime.Idle()) completed.push_back(std::move(old));
+    std::erase_if(retiredEnlargers, [](const auto& old) { return !old; });
+    completed.clear();
+    collectingEnlargers = false;
 }
 
 ID3D12Resource* DlssNr_Dx12::State::EnlargeMatchedResidual(ID3D12GraphicsCommandList* cmd,
-    ID3D12Resource* proxy, const DlssNr::Proxy::Frame& modelFrame, const DlssNrFrameInfo& frame,
-    const DlssNrConstants& resolve, ID3D12CommandQueue* timingQueue)
+    ID3D12Device* device, ID3D12Resource* proxy, ID3D12Resource* answer, ID3D12Resource* depth,
+    ID3D12Resource* motion, const DlssNrFrameInfo& frame, const DlssNrConstants& resolve,
+    bool reset, ID3D12CommandQueue* timingQueue)
 {
-    auto* device = shader._device;
     auto say = [&](const std::string& message) -> ID3D12Resource*
     {
         if (enlargementStatus != message) LOG_INFO("NR DLSS enlargement: {}", message);
@@ -43,14 +50,15 @@ ID3D12Resource* DlssNr_Dx12::State::EnlargeMatchedResidual(ID3D12GraphicsCommand
     Microsoft::WRL::ComPtr<ID3D12Device> queueDevice;
     if (queue && (FAILED(queue->GetDevice(IID_PPV_ARGS(&queueDevice))) || queueDevice.Get() != device))
         return say("NR DLSS enlargement queue/device mismatch.");
-    const auto [w, h] = modelFrame.size;
+    const auto desc = proxy->GetDesc();
+    const unsigned w = unsigned(desc.Width), h = desc.Height;
     if (enlarger && (enlarger->w != w || enlarger->h != h || enlarger->outW != resolve.Width ||
         enlarger->outH != resolve.Height || (queue && enlarger->queue.Get() != queue) ||
         enlarger->depthInverted != frame.DepthInverted)) ReleaseEnlarger();
-    enlargementLifetime.Collect();
+    CollectEnlargers();
     if (!enlarger)
     {
-        if (retiredEnlargers >= 4) return say("Waiting for retired DLSS enlargement work.");
+        if (retiredEnlargers.size() >= 4) return say("Waiting for retired DLSS enlargement work.");
         enlarger = std::make_unique<Enlarger>();
         auto& g = *enlarger;
         g.w = w; g.h = h; g.outW = resolve.Width; g.outH = resolve.Height;
@@ -64,9 +72,9 @@ ID3D12Resource* DlssNr_Dx12::State::EnlargeMatchedResidual(ID3D12GraphicsCommand
         if (!g.input || !g.output || !g.depth || !g.motion || !g.exposure)
             return say("DLSS enlargement resource allocation failed; use Retry.");
         lifetime.Record(cmd);
-        enlargementLifetime.Record(cmd);
+        g.lifetime.Record(cmd);
         DlssNrConstants unit {}; unit.Mode = DlssNrMode_UnitExposure; unit.Width = unit.Height = 1;
-        if (!shader.DispatchPass(cmd, unit, proxy, nullptr, nullptr, nullptr, g.exposure.Get(), nullptr))
+        if (!shader.DispatchPass(cmd, unit, proxy, nullptr, nullptr, nullptr, nullptr, g.exposure.Get(), nullptr))
             return say("DLSS enlargement exposure initialization failed; use Retry.");
         Barrier(cmd, g.exposure.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         g.dlss = std::make_unique<DlssNr::PrivateUpscalerDx12>(DlssNr::PrivateUpscaler::DLSS);
@@ -84,12 +92,17 @@ ID3D12Resource* DlssNr_Dx12::State::EnlargeMatchedResidual(ID3D12GraphicsCommand
     auto& g = *enlarger;
     if (g.failed) return nullptr;
     if (!g.submitted) return say("Waiting for DLSS enlargement initialization submission.");
-    const auto& regions = modelFrame.guides;
+    const auto dd = depth->GetDesc(), md = motion->GetDesc();
+    const auto regions = DlssNr::ResolveGuideRegions({ unsigned(dd.Width), dd.Height },
+        { unsigned(md.Width), md.Height }, { frame.RenderSubrectWidth, frame.RenderSubrectHeight },
+        { frame.OutputWidth, frame.OutputHeight }, frame.MotionVectorsLowResolution,
+        frame.DepthSubrectBaseX, frame.DepthSubrectBaseY, frame.MotionSubrectBaseX, frame.MotionSubrectBaseY);
+    if (!regions.depth.valid() || !regions.motion.valid()) return say("DLSS enlargement needs valid depth and motion.");
     lifetime.Record(cmd);
-    enlargementLifetime.Record(cmd);
+    g.lifetime.Record(cmd);
     DlssNrConstants encode {}; encode.Mode = DlssNrMode_EncodeProxyResidual;
     encode.Width = w; encode.Height = h; encode.Passthrough = resolve.Passthrough;
-    bool ok = shader.DispatchPass(cmd, encode, proxy, modelFrame.output, nullptr, nullptr, g.input.Get(), nullptr);
+    bool ok = shader.DispatchPass(cmd, encode, proxy, answer, nullptr, nullptr, nullptr, g.input.Get(), nullptr);
     DlssNrConstants guides {}; guides.Mode = DlssNrMode_ResizePrivateGuides;
     guides.Width = w; guides.Height = h;
     guides.GuideWidth = regions.depth.width; guides.GuideHeight = regions.depth.height;
@@ -101,8 +114,7 @@ ID3D12Resource* DlssNr_Dx12::State::EnlargeMatchedResidual(ID3D12GraphicsCommand
     guides.MvScaleX = frame.MvScaleX * float(w) / std::max(referenceW ? referenceW : regions.motion.width, 1u);
     guides.MvScaleY = frame.MvScaleY * float(h) / std::max(referenceH ? referenceH : regions.motion.height, 1u);
     if (Config::Instance()->DlssNrHoldFrame.value_or_default()) guides.MvScaleX = guides.MvScaleY = 0;
-    ok &= shader.DispatchPass(cmd, guides, modelFrame.depth, modelFrame.motion, nullptr, nullptr,
-                               g.depth.Get(), g.motion.Get());
+    ok &= shader.DispatchPass(cmd, guides, depth, motion, nullptr, nullptr, nullptr, g.depth.Get(), g.motion.Get());
     if (!ok) { g.reset = true; return say("DLSS enlargement guide/carrier preparation failed."); }
     for (auto* r : { g.input.Get(), g.depth.Get(), g.motion.Get() })
         Barrier(cmd, r, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -112,7 +124,7 @@ ID3D12Resource* DlssNr_Dx12::State::EnlargeMatchedResidual(ID3D12GraphicsCommand
     f.color.resource = g.input.Get(); f.depth.resource = g.depth.Get(); f.motion.resource = g.motion.Get();
     f.exposure.resource = g.exposure.Get(); f.output.resource = g.output.Get();
     f.width = w; f.height = h; f.outputWidth = g.outW; f.outputHeight = g.outH;
-    f.reset = modelFrame.reset || g.reset || frames < g.lastFrame || frames > g.lastFrame + 1;
+    f.reset = reset || frame.Reset || g.reset || frames < g.lastFrame || frames > g.lastFrame + 1;
     // Resampled motion already measures pixels at the private input resolution.
     f.motionScaleX = f.motionScaleY = 1;
     // Post-upscale and finished-picture colour has already been de-jittered by the game.

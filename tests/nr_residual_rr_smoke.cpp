@@ -10,6 +10,7 @@
 #include <vector>
 #include <cstddef>
 #include "../OptiScaler/shaders/dlssnr/DlssNr_Common.h"
+#include "../OptiScaler/shaders/dlssnr/DlssNr_ResidualPair.h"
 #include "../OptiScaler/shaders/dlssnr/precompile/dlssnr_residual_Shader.h"
 using Microsoft::WRL::ComPtr;
 struct Pixel
@@ -33,6 +34,19 @@ try
     static_assert(sizeof(DlssNrConstants) == 256);
     static_assert(offsetof(DlssNrConstants, ResidualBlend) == 116);
     static_assert(offsetof(DlssNrConstants, ResidualMotionBaseY) == 128);
+    DlssNrResidualPair pair;
+    int cmd, params, output, other;
+    expect(!pair.Take(&cmd, &params, &output), "Unarmed residual consumed");
+    pair.Arm(&cmd, &params, &output);
+    expect(pair.Take(&cmd, &params, &output), "Matching residual dropped");
+    expect(!pair.Take(&cmd, &params, &output), "Residual consumed twice");
+    pair.Arm(&cmd, &params, &output);
+    pair.Cancel(); // next pre-seam, even if that frame skips NR
+    expect(!pair.Take(&cmd, &params, &output), "Skipped frame reused old residual");
+    pair.Arm(&cmd, &params, &output);
+    expect(!pair.Take(&cmd, &params, &other), "Different output accepted");
+    expect(!pair.Take(&cmd, &params, &output), "Mismatch was not consumed");
+
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> ctx;
     check(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &device, nullptr,
@@ -149,7 +163,7 @@ try
     result = run(c, base, model, history, motion);
     for (unsigned i = 0; i < 4; ++i)
         expect(result[i].r == base[i].r && result[i].a == base[i].a, "Zero strength changed output");
-    std::puts("PASS: residual shader, cold/warm/reset history, motion reprojection, input-resolution composition, alpha");
+    std::puts("PASS: residual seams, cold/warm/reset history, motion reprojection, input-resolution composition, alpha");
     return 0;
 }
 catch (const std::exception& e)

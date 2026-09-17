@@ -865,7 +865,6 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
     <ClCompile Include="inputs\NVNGX.cpp" />
     <ClCompile Include="inputs\NVNGX_DLSS_Dx11.cpp" />
     <ClCompile Include="shaders\dlssnr\DlssNr_Dx12.cpp" />
-    <ClCompile Include="shaders\dlssnr\DlssNr_Dx12_Compute.cpp" />
     <ClInclude Include="shaders\dlssnr\DlssNr_ActiveColor.h" />
     <ClCompile Include="shaders\dlssnr\DlssNr_Vk.cpp" />
     <ClCompile Include="dlssnr\DlssNrFeature_Vk.cpp" />
@@ -967,5 +966,14 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
     <ClInclude Include="dlssnr\DlssNr_FinishedReady.h" />
     <ClInclude Include="dlssnr\DlssNr_StreamlinePicture.h" />
     <ClCompile Include="dlssnr\DlssNr_StreamlinePicture.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="dlssnr\DlssNr_NgxDiagnostics.cpp" />
+    <ClInclude Include="dlssnr\DlssNr_NgxDiagnostics.h" />
+    <ClCompile Include="dlssnr\DlssNrFeature_Vk_Resources.cpp" />
+    <ClInclude Include="shaders\dlssnr\DlssNr_ResidualPair.h" />
+    <ClCompile Include="shaders\dlssnr\DlssNr_Dx12_Evaluate.cpp" />
+    <ClCompile Include="shaders\dlssnr\DlssNr_Dx12_Encode.cpp" />
+    <ClInclude Include="shaders\dlssnr\DlssNr_Dx12_ModelState.h" />
   </ItemGroup>
 </Project>

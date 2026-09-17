@@ -1641,7 +1641,6 @@
     <ClInclude Include="dlssnr\DlssNr_ModelParameters.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="shaders\dlssnr\DlssNr_ActiveColor.h"><Filter>Header Files</Filter></ClInclude>
     <ClCompile Include="shaders\dlssnr\DlssNr_Dx12.cpp"><Filter>Source Files</Filter></ClCompile>
-    <ClCompile Include="shaders\dlssnr\DlssNr_Dx12_Compute.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClInclude Include="shaders\dlssnr\DlssNr_GpuTime.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="shaders\dlssnr\DlssNr_Guides.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="shaders\dlssnr\DlssNr_SeamClock.h"><Filter>Header Files</Filter></ClInclude>
@@ -1678,5 +1677,14 @@
     <ClCompile Include="dlssnr\DlssNr_CompatibilityRuntimePaths.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClInclude Include="dlssnr\DlssNr_CompatibilityRuntime.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="dlssnr\DlssNr_RuntimeImports.h"><Filter>Header Files</Filter></ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="dlssnr\DlssNrFeature_Vk_Resources.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClInclude Include="shaders\dlssnr\DlssNr_ResidualPair.h"><Filter>Header Files</Filter></ClInclude>
+    <ClCompile Include="shaders\dlssnr\DlssNr_Dx12_Evaluate.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="shaders\dlssnr\DlssNr_Dx12_Encode.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClInclude Include="shaders\dlssnr\DlssNr_Dx12_ModelState.h"><Filter>Header Files</Filter></ClInclude>
+    <ClCompile Include="dlssnr\DlssNr_NgxDiagnostics.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClInclude Include="dlssnr\DlssNr_NgxDiagnostics.h"><Filter>Header Files</Filter></ClInclude>
   </ItemGroup>
 </Project>

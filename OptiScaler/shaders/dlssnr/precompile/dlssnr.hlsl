@@ -1,8 +1,47 @@
-#include "dlssnr_common.hlsli"
+
+#ifdef VK_MODE
+[[vk::binding(0, 0)]]
+cbuffer Params : register(b0, space0)
+#else
+cbuffer Params : register(b0)
+#endif
+{
+    uint  gMode;
+    float gWhitePoint;
+    uint  gWidth;
+    uint  gHeight;
+    float gTransferStrength;
+    float gColourStrength;
+    uint  gDebugView;
+    float gMaxRatio;
+    uint  gPassthrough;
+    float gMvScaleX;     // motion vector units -> pixels of this dispatch
+    float gMvScaleY;
+    uint  gGuideWidth;   // the motion texture's valid region
+    uint  gGuideHeight;
+    uint  gCompareMode;  // 0 off, 1 side by side, 2 wipe
+    float gCompareSplit; // where the wipe cuts, 0..1
+    float gCompareZoom;  // side by side: 1 fits the frame, 2 fills the half
+    uint  gCompareSwap;  // put the edited frame on the other side
+    uint  gTransfer;     // 0 classic, 1 matched residual -- how a below-size model comes back
+    float gDebugScale;   // what the debug views are scaled by, held still while the meter moves
+    uint  gReversibleMode; // 0 knee, 1 Neutwo+composed, 2 Neutwo+replace, 3 hybrid+composed, 4 hybrid+replace
+    uint  gApplyModel;     // 0 output the clean frame (pass still runs), 1 apply the model's edit
+    uint  gReserved;
+    float gResidualScale;
+    uint  gSkinProtection;
+    uint  gShowSkinMask;
+    float gSkinDetail;
+    float gSkinColour;
+    float gEnvironmentDetail;
+    float gEnvironmentColour;
+};
 
 // Hue-preserving gamut compression toward the D65 neutral axis.
 // Adapted from clshortfuse/RenoDX (https://github.com/clshortfuse/renodx).
 // See Licenses/RenoDX_ATTRIBUTION.txt.
+
+float SanitizeFinite(float v, float fallback) { return isfinite(v) ? v : fallback; }
 
 // Approximate skin-colour selection, not a face/skin segmentation network. Warm
 // materials may be selected and coloured lighting can hide skin. The preview is
@@ -16,6 +55,17 @@ float SkinColourWeight(float3 rgb)
     float2 distance = (float2(cb, cr) - float2(0.405, 0.600)) / float2(0.090, 0.110);
     float chroma = max(rgb.r, max(rgb.g, rgb.b)) - min(rgb.r, min(rgb.g, rgb.b));
     return (1.0 - smoothstep(0.55, 1.35, length(distance))) * smoothstep(0.02, 0.10, chroma);
+}
+
+float3 SanitizeFinite3(float3 v, float3 fallback)
+{
+    return float3(SanitizeFinite(v.x, fallback.x), SanitizeFinite(v.y, fallback.y),
+                  SanitizeFinite(v.z, fallback.z));
+}
+
+float SafeDivide(float numerator, float denominator, float fallback)
+{
+    return abs(denominator) > 1e-8 ? numerator / denominator : fallback;
 }
 
 // Hunt-Pointer-Estevez LMS over linear BT.709, carrying the fixed D65 adaptation state the
@@ -45,30 +95,45 @@ float3 D65NeutralBT709(float3 adaptiveStateLms, float luminance)
     return d65 * (luminance / d65Y);
 }
 
-// Compress toward the neutral axis until every channel is nonnegative, preserving hue.
-float3 ClampAp1(float3 color)
+// The largest scale toward the neutral axis that leaves no channel negative. One for a colour that
+// was already representable, which is why this is safe to run on every pixel.
+float GamutCompressionScale(float3 color, float3 adaptiveStateLms)
 {
-    const float3 adaptiveStateLms = BT709ToLMS(float3(0.18, 0.18, 0.18));
-    const float3 finite = SanitizeFinite3(color, 0.0);
-    const float y = dot(finite, float3(0.2126, 0.7152, 0.0722));
+    color = SanitizeFinite3(color, float3(0.0, 0.0, 0.0));
+
+    const float y = dot(color, float3(0.2126, 0.7152, 0.0722));
+
     if (!(y > 1e-8))
-        return color;
+        return 1.0;
 
     const float3 neutral = D65NeutralBT709(adaptiveStateLms, y);
     float scale = 1.0;
-    [unroll] for (uint channel = 0; channel < 3; ++channel)
-    {
-        const float distance = neutral[channel] - finite[channel];
-        if (finite[channel] < 0.0 && neutral[channel] > finite[channel])
-            scale = min(scale, abs(distance) > 1e-8 ? neutral[channel] / distance : 1.0);
-    }
-    scale = saturate(SanitizeFinite(scale, 1.0));
+
+    if (color.r < 0.0 && neutral.r > color.r)
+        scale = min(scale, SafeDivide(neutral.r, neutral.r - color.r, 1.0));
+
+    if (color.g < 0.0 && neutral.g > color.g)
+        scale = min(scale, SafeDivide(neutral.g, neutral.g - color.g, 1.0));
+
+    if (color.b < 0.0 && neutral.b > color.b)
+        scale = min(scale, SafeDivide(neutral.b, neutral.b - color.b, 1.0));
+
+    return saturate(SanitizeFinite(scale, 1.0));
+}
+
+float3 ClampAp1(float3 color)
+{
+    const float3 adaptiveStateLms = BT709ToLMS(float3(0.18, 0.18, 0.18));
+    const float scale = GamutCompressionScale(color, adaptiveStateLms);
 
     // Nothing was out of gamut. Leave the colour exactly as it arrived.
     if (scale >= 1.0)
         return color;
-    const float3 axis = D65NeutralBT709(adaptiveStateLms, dot(color, float3(0.2126, 0.7152, 0.0722)));
-    return SanitizeFinite3(axis + (color - axis) * scale, max(axis, 0.0));
+
+    const float y = dot(color, float3(0.2126, 0.7152, 0.0722));
+    const float3 neutral = D65NeutralBT709(adaptiveStateLms, y);
+
+    return SanitizeFinite3(neutral + (color - neutral) * scale, max(neutral, 0.0));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -121,6 +186,45 @@ float3 HueOkLab(float3 incorrect, float3 correct)
     return ClampAp1(FromOkLab(incorrectLab));
 }
 
+// Bindings are stated for SPIR-V rather than inferred. D3D keeps b, t, u and s in separate register
+// files, so b0 and t0 do not collide; Vulkan has one number line per descriptor set, and dxc's default
+// mapping would put both at binding 0. The numbers below are the order the pass binds them in, and
+// DlssNr_Vk's descriptor set layout has to agree with them entry for entry.
+#ifdef VK_MODE
+[[vk::binding(1, 0)]]
+#endif
+Texture2D<float4>   gSource   : register(t0);  // encode: the frame. resolve: the proxy.
+#ifdef VK_MODE
+[[vk::binding(2, 0)]]
+#endif
+Texture2D<float4>   gModel    : register(t1);  // resolve: what the model returned.
+#ifdef VK_MODE
+[[vk::binding(3, 0)]]
+#endif
+Texture2D<float4>   gOriginal : register(t2);  // resolve: the untouched frame.
+#ifdef VK_MODE
+[[vk::binding(4, 0)]]
+#endif
+Texture2D<float4>   gMotion   : register(t3);  // resolve, accumulating: the game's motion vectors.
+
+#ifdef VK_MODE
+[[vk::binding(5, 0)]]
+#endif
+RWTexture2D<float4> gTarget   : register(u0);  // encode: the proxy. resolve: the frame.
+#ifdef VK_MODE
+[[vk::binding(6, 0)]]
+#endif
+RWTexture2D<float4> gKeep     : register(u1);  // encode: the untouched copy. unused by the resolve.
+#ifdef VK_MODE
+[[vk::binding(7, 0)]]
+#endif
+SamplerState        gLinear   : register(s0);  // so the edit can be read at a different size
+
+float WhitePoint()
+{
+    return max(gWhitePoint, 1e-4);
+}
+
 static const float3 kLuma = float3(0.2126, 0.7152, 0.0722);
 
 // sRGB rather than a plain 2.2 power: it is what an SDR game buffer actually carries, and the model was
@@ -137,6 +241,22 @@ float3 SrgbToLinear(float3 v)
     return lerp(v / 12.92, pow((v + 0.055) / 1.055, 2.4), step(0.04045, v));
 }
 
+// The edit at an arbitrary position, exactly as the resolve computes its own.
+float3 EditAt(float2 uvq)
+{
+    float3 p = gSource.SampleLevel(gLinear, uvq, 0).rgb;
+    float3 m = gModel.SampleLevel(gLinear, uvq, 0).rgb;
+
+    if (gPassthrough == 0)
+    {
+        p = SrgbToLinear(p);
+        m = SrgbToLinear(m);
+    }
+
+    return m - p;
+}
+
+
 // Soft-knee proxy shared by encoding and matched-residual reconstruction.
 float3 SoftKnee(float3 display)
 {
@@ -151,7 +271,19 @@ float3 SoftKnee(float3 display)
         display *= rolled / displayLuma;
     }
 
-    // Scale all channels together to preserve hue when the luminance knee leaves a channel above one.
+    // Per-channel headroom, with the hue kept.
+    //
+    // The roll-off above is on luminance, and luminance is a weighted sum in which blue counts for
+    // seven percent. A saturated blue can therefore sit at B = 2 with a luminance of 0.14, pass the
+    // knee untouched, and be clipped per channel by the saturate in LinearToSrgb -- and clipping one
+    // channel of a triple is a hue rotation, so blue arrives as cyan. That was the green cast over
+    // every blue thing in GTA V at colour strength 1: the sky, the denim, the minimap. The model was
+    // shown a cyan proxy, answered in cyan, and at colour strength 1 its hue is the frame's hue.
+    //
+    // One scalar on the whole triple cannot move hue, so the peak channel is brought to 1 that way.
+    // Only pixels that were already being clipped are touched, so everything else is bit-identical
+    // to before, and the resolve's reconstruction of this proxy stays exact because it goes through
+    // this same function.
     float peak = max(display.r, max(display.g, display.b));
 
     if (peak > 1.0)
@@ -160,40 +292,98 @@ float3 SoftKnee(float3 display)
     return display;
 }
 
-// Hue-preserving Neutwo or hybrid proxy, adapted from clshortfuse/RenoDX.
-// Hybrid leaves values below 0.75 unchanged. The inverse caps its pole at one.
-float3 ReversibleProxy(float3 colour, bool inverse)
-{
-    colour = max(colour, 0.0);
-    float peak = max(colour.r, max(colour.g, colour.b));
-    const bool hybrid = gReversibleMode >= 3;
-    if (inverse && !hybrid)
-        peak = min(peak, 0.999999);
-    if (peak <= 1e-6)
-        return colour;
+// Unclipped, hue-preserving Neutwo proxy adapted from clshortfuse/RenoDX.
+// One scalar maps the peak channel to [0,1), preserving RGB ratios.
+// Negative input channels are clamped before encoding. See Licenses/RenoDX_LICENSE.txt.
+float Neutwo(float x) { return x * rsqrt(x * x + 1.0); } // [0, inf) -> [0, 1), no clip point
 
-    float mapped = peak;
-    if (hybrid)
-    {
-        const float knee = 0.75;
-        if (peak > knee)
-        {
-            float x = (peak - knee) / (1.0 - knee);
-            if (inverse)
-                x = min(x, 0.999999);
-            const float curve = inverse ? x * rsqrt(max(1.0 - x * x, 1e-8))
-                                        : x * rsqrt(x * x + 1.0);
-            mapped = knee + (1.0 - knee) * curve;
-        }
-    }
-    else
-        mapped = inverse ? peak * rsqrt(max(1.0 - peak * peak, 1e-8))
-                         : peak * rsqrt(peak * peak + 1.0);
-    return colour * (mapped / peak);
+float3 NeutwoEncode(float3 v)
+{
+    v = max(v, 0.0);
+    float m = max(v.r, max(v.g, v.b));
+
+    if (m <= 1e-6)
+        return v;
+
+    // One scalar taken from the peak channel keeps the hue; the peak lands at Neutwo(m) < 1, so no
+    // channel clips and LinearToSrgb's saturate never fires -- the proxy is fully invertible.
+    return v * (Neutwo(m) / m);
 }
 
-// Scale the whole edit to keep RGB inside [0,1] without bending hue.
-// Adapted from hhkbble's multipass contribution.
+// Replace-mode inverse of NeutwoEncode. Clamp below its pole at 1 to keep highlights finite.
+float3 NeutwoDecode(float3 y)
+{
+    y = max(y, 0.0);
+    float m = max(y.r, max(y.g, y.b));
+    m = min(m, 0.999999);
+
+    if (m <= 1e-6)
+        return y;
+
+    float x = m * rsqrt(max(1.0 - m * m, 1e-8)); // Neutwo^-1 of the peak
+    return y * (x / m);
+}
+
+// Hybrid proxy: identity below the knee, a C1-continuous Neutwo rolloff above it.
+float HybridCurve(float m)
+{
+    const float k = 0.75; // knee point: identity below, gentle unclipped roll above
+
+    if (m <= k)
+        return m;
+
+    const float e = (m - k) / (1.0 - k);         // excess above the knee, [0, inf)
+    return k + (1.0 - k) * (e * rsqrt(e * e + 1.0)); // Neutwo(e) scaled into [k, 1); -> 1, never clips
+}
+
+float3 HybridEncode(float3 v)
+{
+    v = max(v, 0.0);
+    float m = max(v.r, max(v.g, v.b));
+
+    if (m <= 1e-6)
+        return v;
+
+    // One scalar on the peak channel, hue preserved. Below the knee the scalar is 1 (identity); above
+    // it the peak lands at HybridCurve(m) < 1, so no channel clips.
+    return v * (HybridCurve(m) / m);
+}
+
+// The exact inverse of the hybrid curve, for the hybrid REPLACE decode (mode 4). Because it is IDENTITY
+// below the knee, the steep expansion is confined to genuine highlights: midtone model wobble is not
+// amplified, so hybrid-replace flashes far less than Neutwo-replace while keeping the raw model detail.
+float HybridCurveInv(float y)
+{
+    const float k = 0.75;
+
+    if (y <= k)
+        return y;
+
+    float u = (y - k) / (1.0 - k);                  // Neutwo(e), in [0,1)
+    u = min(u, 0.999999);                           // the inverse diverges at 1
+    const float e = u * rsqrt(max(1.0 - u * u, 1e-8)); // Neutwo^-1 of the excess
+    return k + (1.0 - k) * e;
+}
+
+float3 HybridDecode(float3 y)
+{
+    y = max(y, 0.0);
+    float m = max(y.r, max(y.g, y.b));
+
+    if (m <= 1e-6)
+        return y;
+
+    return y * (HybridCurveInv(m) / m);
+}
+
+// Scale a residual so the result cannot leave the unit cube, without changing its direction.
+//
+// The model's edit is carried up from a smaller raster and laid on the frame's own proxy, so nothing
+// guarantees the sum is still a colour. Clamping per channel would bend the hue -- the channel that
+// hits the wall first decides the colour of the rest -- so the whole residual is scaled by the
+// largest factor that keeps every channel inside, and the direction survives.
+//
+// hhkbble's, from the multi-pass PR against this fork.
 float3 CubeScaleResidual(float3 P, float3 T)
 {
     if (gPassthrough != 0)
@@ -221,7 +411,6 @@ void CSMain(uint3 id : SV_DispatchThreadID)
 
     // Normalised, so the source may be any size relative to this dispatch.
     float2 uv = (float2(id.xy) + 0.5) / float2(gWidth, gHeight);
-    const float whitePoint = max(gWhitePoint, 1e-4);
 
     // Experimental private-DLSS carrier, not an ordinary colour image. Neutral 0.5 encodes zero;
     // values below it carry darkening. A reversible signed compression avoids clipping negative
@@ -283,11 +472,11 @@ void CSMain(uint3 id : SV_DispatchThreadID)
 
     if (gMode == 2)
     {
-        uint2 size;
-        gSource.GetDimensions(size.x, size.y);
+        uint srcW, srcH;
+        gSource.GetDimensions(srcW, srcH);
 
         // Nothing to do when the sizes already agree.
-        if (all(size == uint2(gWidth, gHeight)))
+        if (srcW == gWidth && srcH == gHeight)
         {
             gTarget[id.xy] = gSource.Load(int3(id.xy, 0));
             return;
@@ -295,24 +484,39 @@ void CSMain(uint3 id : SV_DispatchThreadID)
 
         // Exact area-weighted downsampling avoids the aliasing of a single bilinear tap.
         // Adapted from hhkbble's multi-pass contribution.
-        const float2 lo = (float2(id.xy) * float2(size)) / float2(gWidth, gHeight);
-        const float2 hi = (float2(id.xy + 1) * float2(size)) / float2(gWidth, gHeight);
-        const float area = (hi.x - lo.x) * (hi.y - lo.y);
-        const int2 first = int2(floor(lo)), last = int2(ceil(hi)) - 1;
+        const float x0 = ((float) id.x * (float) srcW) / (float) gWidth;
+        const float x1 = ((float) (id.x + 1) * (float) srcW) / (float) gWidth;
+        const float y0 = ((float) id.y * (float) srcH) / (float) gHeight;
+        const float y1 = ((float) (id.y + 1) * (float) srcH) / (float) gHeight;
+        const float area = (x1 - x0) * (y1 - y0);
+
+        const int i0 = (int) floor(x0);
+        const int i1 = (int) ceil(x1) - 1;
+        const int j0 = (int) floor(y0);
+        const int j1 = (int) ceil(y1) - 1;
+
         float3 acc = 0.0;
-        for (int j = first.y; j <= last.y; ++j)
+
+        for (int j = j0; j <= j1; ++j)
         {
-            const float wy = max(min(hi.y, (float) j + 1.0) - max(lo.y, (float) j), 0.0);
-            for (int i = first.x; i <= last.x; ++i)
+            const int jj = clamp(j, 0, (int) srcH - 1);
+            const float aY = max(y0, (float) j);
+            const float bY = min(y1, (float) j + 1.0);
+            const float wy = max(bY - aY, 0.0);
+
+            for (int i = i0; i <= i1; ++i)
             {
-                const float wx = max(min(hi.x, (float) i + 1.0) - max(lo.x, (float) i), 0.0);
-                const int2 at = clamp(int2(i, j), 0, int2(size) - 1);
-                acc += gSource.Load(int3(at, 0)).rgb * (wx * wy);
+                const int ii = clamp(i, 0, (int) srcW - 1);
+                const float aX = max(x0, (float) i);
+                const float bX = min(x1, (float) i + 1.0);
+                acc += gSource.Load(int3(ii, jj, 0)).rgb * (max(bX - aX, 0.0) * wy);
             }
         }
-        const int2 center = clamp(int2(floor((float2(id.xy) + 0.5) * float2(size) / float2(gWidth, gHeight))),
-                                  0, int2(size) - 1);
-        gTarget[id.xy] = float4(acc / area, gSource.Load(int3(center, 0)).a);
+
+        const int acx = clamp((int) floor(((float) id.x + 0.5) * (float) srcW / (float) gWidth), 0, (int) srcW - 1);
+        const int acy = clamp((int) floor(((float) id.y + 0.5) * (float) srcH / (float) gHeight), 0, (int) srcH - 1);
+
+        gTarget[id.xy] = float4(acc / area, gSource.Load(int3(acx, acy, 0)).a);
         return;
     }
 
@@ -333,14 +537,29 @@ void CSMain(uint3 id : SV_DispatchThreadID)
             return;
         }
 
-        // The chosen proxy curve is reproduced during matched-residual composition.
-        // Passthrough has already returned, so these curves only receive linear HDR.
-        float3 normalized = frame / whitePoint;
+        // What the model is shown. Mode 2 -- the default -- scales the frame and encodes it, and that
+        // is all: the game is going to tone map this picture later, so tone mapping it here as well
+        // shows the model a doubly compressed image. Measured against Cyberpunk's own numbers, the
+        // Reinhard proxy handed the model a scene value of 1.0 as 0.55 and 1.5 as 0.64 -- flat, dark,
+        // and nothing like the finished frame it was trained on. The model then synthesised weakly,
+        // judged tone on a picture that does not exist, and its answer had to be un-crushed on the way
+        // back. Mode 0 keeps that old curve, mode 1 the fitted one.
+        // A soft knee instead of a hard ceiling. Anything above 0.75 is rolled off rather than
+        // clipped, so the model is never shown a field of flat white whose blown pixels flip between
+        // frames -- unstable input is unstable output, and this is where a bright scene would produce
+        // it. The resolve reproduces this exactly, so the two agree on what the frame's own proxy is.
+        // The classic soft knee, or -- when the reversible proxy is on -- the unclipped Neutwo encode
+        // that shows the model highlight gradation the knee throws away. Reached only when the frame
+        // is not passthrough (handled and returned above), so NeutwoEncode never sees a tone-mapped
+        // frame. Both are undone by the resolve: the knee approximately, Neutwo exactly.
+        float3 normalized = frame / WhitePoint();
         float3 display;
         if (gReversibleMode == 0)
             display = SoftKnee(normalized);        // soft knee
+        else if (gReversibleMode >= 3)
+            display = HybridEncode(normalized);    // 3 hybrid composed, 4 hybrid replace -- same curve
         else
-            display = ReversibleProxy(normalized, false);
+            display = NeutwoEncode(normalized);    // 1 composed, 2 replace -- both the full Neutwo proxy
 
         // The reversible proxy forces opaque alpha -- feature 18 expects an opaque colour input, and
         // the frame's own alpha is not part of what the model reads. The knee path keeps the frame's
@@ -351,7 +570,14 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         return;
     }
 
-    // Side-by-side remaps sampling coordinates; wipe selects an unscaled half-frame.
+    // Comparison, decided before anything is read, because side by side changes which part of the
+    // frame this pixel is showing rather than just which version of it.
+    //
+    //   1  side by side  each half carries the whole frame, so both are squeezed horizontally
+    //   2  wipe          one frame cut at the split, nothing resampled
+    //
+    // Neither needs the menu open to stay up. The wipe's split is a setting like any other; the menu
+    // is only how you drag it.
     float2 cmpUv = uv;
     bool showOriginal = false;
     bool onDivider = false;
@@ -361,7 +587,13 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     {
         showOriginal = (uv.x < 0.5) != (gCompareSwap != 0);
 
-        // Preserve aspect ratio: zoom 1 letterboxes, zoom 2 fills each half by cropping.
+        // Each half is half as wide as the frame and just as tall, so the frame cannot fill it and
+        // keep its shape. Stretching it to fit is what made both sides look squashed. Fitting it
+        // properly leaves the halves letterboxed, which is the honest way round: a comparison that
+        // changes the shape of what it is comparing is not showing you the picture.
+        //
+        // Zoom decides which is given up. At 1 the whole frame is there at its right proportions
+        // with bars above and below; at 2 the half is filled and the sides are cropped away.
         float2 half2 = float2(uv.x < 0.5 ? uv.x * 2.0 : (uv.x - 0.5) * 2.0, uv.y) - 0.5;
         cmpUv = float2(0.5 + half2.x / gCompareZoom, 0.5 + half2.y * 2.0 / gCompareZoom);
 
@@ -389,23 +621,37 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     float4 originalSample = gCompareMode == 1 ? gOriginal.SampleLevel(gLinear, cmpUv, 0)
                                               : gOriginal.Load(int3(id.xy, 0));
 
-    // Normalize scene-linear colour to the same white point as the decoded proxy and model.
-    const float normScale = gPassthrough != 0 ? 1.0 : whitePoint;
+    // All three pictures have to share a scale before their luminances can be compared. The proxy and
+    // the model come back from an sRGB decode, so they sit in 0..1 where 1 is the white point; the
+    // frame is raw linear and runs well past that. Comparing them unnormalised is a real bug and it
+    // reads exactly like the model has stopped adding detail: with the frame several times larger,
+    // the shadow branch never fires, every pixel takes the highlight branch, and the clamp flattens
+    // the result to a near-constant scale. Colour still moves, because that comes from the model's
+    // own hue, which is what makes the failure so confusing to look at.
+    const float normScale = gPassthrough != 0 ? 1.0 : WhitePoint();
     float3 original = originalSample.rgb / normScale;
 
     float originalLuma = dot(original, kLuma);
     float proxyLuma = dot(proxy, kLuma);
 
-    // Keep evaluation active for held-frame A/B even when displaying the clean frame.
+    // Apply the model. Off outputs the frame as the upscaler produced it (clean) while the pass keeps
+    // running -- so with Hold frame you can freeze a frame and toggle this to A/B the same frozen frame
+    // with and without Neural Rendering. In passthrough the frame is already display-referred.
     if (gApplyModel == 0)
     {
         gTarget[id.xy] = float4(max(originalSample.rgb, 0.0), originalSample.a);
         return;
     }
 
-    if (gDebugView == 1 || gDebugView == 2)
+    if (gDebugView == 1)
     {
-        gTarget[id.xy] = float4((gDebugView == 1 ? proxy : model) * gDebugScale, originalSample.a);
+        gTarget[id.xy] = float4(proxy * gDebugScale, originalSample.a);
+        return;
+    }
+
+    if (gDebugView == 2)
+    {
+        gTarget[id.xy] = float4(model * gDebugScale, originalSample.a);
         return;
     }
 
@@ -416,6 +662,9 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         edit = (1.0 / 64.0) * carrier / (1.0 - abs(carrier));
     }
 
+    // Coring was tried here and removed: the per-frame churn's amplitude overlaps the real detail's,
+    // so an amplitude threshold cannot separate them -- it only relocated the noise to the threshold.
+
     if (gDebugView == 3)
     {
         // Amplified and centred on grey, so both directions of the edit are visible at once.
@@ -424,8 +673,11 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         return;
     }
 
-    // Carry the small model's difference onto a full-resolution proxy.
-    // At native size Classic keeps its exact arithmetic. Based on hhkbble's multipass contribution.
+    // Composition uses the current model answer; temporal residual accumulation is a separate pass.
+
+    // Rebuild the full-resolution proxy and add only the upsampled model difference.
+    // Skip ordinary matched residual at native resolution to preserve Classic's exact arithmetic.
+    // Residual transfer and cube scaling are adapted from hhkbble's multi-pass contribution.
     uint proxyW, proxyH;
     gSource.GetDimensions(proxyW, proxyH);
     const bool modelRanSmall = proxyW != gWidth || proxyH != gHeight;
@@ -436,11 +688,14 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         // An out-of-range reconstructed proxy would collapse the residual scale to zero.
         float3 fullProxy = gPassthrough != 0
                                ? saturate(original)
-                               : (gReversibleMode == 0 ? saturate(SoftKnee(original))
-                                                      : ReversibleProxy(original, false));
+                               : (gReversibleMode == 0   ? saturate(SoftKnee(original))
+                                  : gReversibleMode >= 3 ? HybridEncode(original)
+                                                         : NeutwoEncode(original));
         proxy = fullProxy;
         proxyLuma = dot(proxy, kLuma);
 
+        // At the same rate there is no residual to carry: the model's own picture is already at the
+        // frame's resolution, and P + (m - p) collapses to m exactly.
         model = CubeScaleResidual(fullProxy, fullProxy + edit);
         if (gTransfer == 2) modelDirect = model;
     }
@@ -457,15 +712,28 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     }
     else
     {
-        // Match lower scene luminance, or restore scene headroom absent from the proxy.
-        float ratio = originalLuma < proxyLuma ? originalLuma / max(proxyLuma, 1e-6)
-                                              : (modelLuma + max(0.0, originalLuma - proxyLuma)) / modelLuma;
+        float ratio;
+
+        if (originalLuma < proxyLuma)
+        {
+            // Below what the proxy showed: the frame's own luminance is the target.
+            ratio = originalLuma / max(proxyLuma, 1e-6);
+        }
+        else
+        {
+            // Above it, the difference is headroom the proxy could not represent -- brightness the
+            // frame really has and the model never saw. It is handed back on top of the model's own
+            // answer rather than scaled away, which is what kept highlights from being muted.
+            ratio = (modelLuma + max(0.0, originalLuma - proxyLuma)) / modelLuma;
+        }
 
         // Keep the RGB blend within [0,1]; strength above 1 amplifies the bounded luminance ratio below.
         upgraded = lerp(original, HueOkLab(model * ratio, model), saturate(gTransferStrength));
     }
 
-    // Blend luminance-only and model-colour results independently.
+    // Detail strength decides how much of the model's picture is reached at all; colour strength
+    // decides whether its colour comes with it. At 0 the frame keeps the game's own hue exactly and
+    // only its light carries the model's verdict; at 1 the model's colour arrives as well.
     float upgradedLuma = dot(upgraded, kLuma);
 
     // A common luminance floor suppresses unstable ratios in near-black pixels.
@@ -479,7 +747,8 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     const float guard = max(gMaxRatio, 1.0);
     float boundedRatio = clamp(amplified, 1.0 / guard, guard);
 
-    // Preserve exact identity when no bounding is needed.
+    // Exactly one while the ratio is already inside the guard, so a frame that never needed bounding
+    // is untouched rather than rounded, and strength zero stays bit-identical.
     upgraded *= boundedRatio / max(lumaRatio, 1e-6);
 
     // Both blend endpoints obey the luminance guard. Above colour strength 1, boost OkLab chroma
@@ -490,8 +759,10 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         result = ClampAp1(FromOkLab(float3(1.0, gColourStrength, gColourStrength) * ToOkLab(max(result, 0.0))));
 
     // Replace modes decode the model answer directly; passthrough colour needs no inverse transform.
-    if (gReversibleMode == 2 || gReversibleMode == 4)
-        result = gPassthrough != 0 ? modelDirect : ReversibleProxy(modelDirect, true);
+    if (gReversibleMode == 2)
+        result = gPassthrough != 0 ? modelDirect : NeutwoDecode(modelDirect);
+    else if (gReversibleMode == 4)
+        result = gPassthrough != 0 ? modelDirect : HybridDecode(modelDirect);
 
     // Back out of the normalised space the composition worked in.
     result *= normScale;
@@ -522,13 +793,14 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     if (showOriginal)
         result = originalSample.rgb;
 
-    // Clear letterbox pixels instead of stretching the clamped edge.
+    // The letterbox. The sampler clamps rather than wrapping, so without this the bars would be the
+    // frame's edge row smeared down the screen.
     if (outsideFrame)
         result = float3(0.0, 0.0, 0.0);
 
     // A hairline so the two sides are never mistaken for one picture.
     if (onDivider)
-        result = whitePoint.xxx;
+        result = float3(WhitePoint(), WhitePoint(), WhitePoint());
 
     gTarget[id.xy] = float4(max(result, float3(0.0, 0.0, 0.0)), originalSample.a);
 }

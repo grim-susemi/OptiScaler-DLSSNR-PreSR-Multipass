@@ -4,6 +4,13 @@
 #include "../../OptiScaler/upscalers/ShaderPipeline_Dx12.h"
 #include "../../OptiScaler/dlssnr/DlssNr_HoldParameters_Dx12.h"
 
+namespace DlssNr::NgxDiagnostics
+{
+Scope::Scope() {}
+Scope::~Scope() {}
+void RuntimeReport(ID3D12GraphicsCommandList*, ID3D12Device*, const char*) {}
+}
+
 // Routing seam: hardware tests separately exercise the real compatibility loader.
 namespace CompatibilityMock {
 bool available=false;
@@ -72,26 +79,13 @@ int main()
     bool evaluated = true;
     uint64_t epoch = 0;
     DlssNr::ModelSettings settings { 0, 0, 0.5f, 1.0f, 0.0f, -1.0f, true };
-    const auto evaluate = [&](DlssNr::Proxy::Context& context, const DlssNr::Proxy::Frame& frame,
-                              const DlssNr::ModelSettings& profile)
-    {
-        evaluated = false;
-        bool ready = false;
-        const auto prepared = context.Prepare(&commands, &device, frame.size.width, frame.size.height,
-                                               profile, epoch, &ready);
-        if (prepared != NVSDK_NGX_Result_Success || !ready)
-            return prepared;
-        const auto result = context.Evaluate(&commands, frame);
-        evaluated = result == NVSDK_NGX_Result_Success;
-        return result;
-    };
     auto run = [&](bool advance = true)
     {
         if (advance)
             ++epoch;
         const DlssNr::Proxy::Frame frame { &color, &depth, &motion, &output, { 1920, 1080 },
             { { 12, 24, 1280, 720 }, { 32, 48, 1920, 1080 } }, true, false, 0.5f, -0.25f };
-        return evaluate(proxy, frame, settings);
+        return proxy.Run(&commands, &device, frame, settings, epoch, &evaluated);
     };
     auto value = []<typename T>(const char* key)
     {
@@ -125,19 +119,6 @@ int main()
     assert(run() == NVSDK_NGX_Result_Success && evaluated);
     assert(value.operator()<unsigned int>("DLSSNR.Reset") == 0);
 
-    // Vulkan shares scalar/guide metadata but NGX requires void-pointer resource setters.
-    Mock::Params vkParameters;
-    const DlssNr::ModelFrame<void> vkFrame { &color, &depth, &motion, &output, { 1920, 1080 },
-        { { 12, 24, 1280, 720 }, { 32, 48, 1920, 1080 } }, true, false, 0.5f, -0.25f };
-    DlssNr::SetModelEvaluation(&vkParameters, vkFrame, settings);
-    for (const auto& [key, field] : vkParameters.values)
-    {
-        if (std::holds_alternative<void*>(field))
-            assert(std::get<void*>(field) == std::get<ID3D12Resource*>(Mock::latest->values.at(key)));
-        else
-            assert(field == Mock::latest->values.at(key));
-    }
-
     // Creation-time tuning edits rebuild; the previous GPU feature/map survive the retirement window.
     settings.preset = 2;
     assert(run() == NVSDK_NGX_Result_Success && !evaluated);
@@ -159,13 +140,13 @@ int main()
     assert(run() == (unsigned int) Mock::evaluateResult && !evaluated);
     auto evaluationsBefore = Mock::evaluations;
     assert(run() == 0 && !evaluated && Mock::evaluations == evaluationsBefore);
-    proxy.Release();
+    proxy.RetryAfterFailure();
     Mock::evaluateResult = NVSDK_NGX_Result_Success;
     Mock::createResult = NVSDK_NGX_Result_FAIL_UnableToInitializeFeature;
     assert(run() == (unsigned int) Mock::createResult && !evaluated);
     auto creationsBefore = Mock::creations;
     assert(run() == 0 && Mock::creations == creationsBefore);
-    proxy.Release();
+    proxy.RetryAfterFailure();
     Mock::createResult = NVSDK_NGX_Result_Success;
     assert(run() == NVSDK_NGX_Result_Success && !evaluated);
     assert(run() == NVSDK_NGX_Result_Success && evaluated);
@@ -188,8 +169,7 @@ int main()
         {
             const DlssNr::Proxy::Frame frame { &color, &depth, &motion, &output, { 1280, 720 },
                 { { 0, 0, 1280, 720 }, { 0, 0, 1280, 720 } } };
-            ++epoch;
-            return evaluate(other, frame, otherSettings);
+            return other.Run(&commands, &device, frame, otherSettings, ++epoch, &evaluated);
         };
         assert(runOther() == NVSDK_NGX_Result_Success && !evaluated);
         auto* secondParams = Mock::latest;
@@ -226,13 +206,13 @@ int main()
     // Only the earlier driver initialization rejection tried compatibility loading.
     assert(CompatibilityMock::opens == 1);
     Mock::createResult = NVSDK_NGX_Result_FAIL_UnableToInitializeFeature;
-    proxy.Release();
+    proxy.RetryAfterFailure();
     assert(run() == NVSDK_NGX_Result_FAIL_UnableToInitializeFeature && !evaluated);
     proxy.ResetRecording(&commands);
     assert(CompatibilityMock::opens == 2 && Mock::handles.empty());
 
     CompatibilityMock::available = true;
-    proxy.Release();
+    proxy.RetryAfterFailure();
     assert(run() == NVSDK_NGX_Result_Success && !evaluated);
     proxy.ResetRecording(&commands);
     assert(run() == NVSDK_NGX_Result_Success && evaluated);
@@ -245,7 +225,7 @@ int main()
 
     // Direct creation failures also retain backend ownership until recording is retired.
     CompatibilityMock::createResult = NVSDK_NGX_Result_Fail;
-    proxy.Release();
+    proxy.RetryAfterFailure();
     assert(run() == NVSDK_NGX_Result_Fail && !evaluated);
     assert(CompatibilityMock::destroyed == 1);
     proxy.ResetRecording(&commands);
@@ -253,7 +233,7 @@ int main()
     const auto attempts = CompatibilityMock::opens;
     CompatibilityMock::createResult = NVSDK_NGX_Result_Success;
     Mock::createResult = NVSDK_NGX_Result_Fail;
-    proxy.Release();
+    proxy.RetryAfterFailure();
     assert(run() == NVSDK_NGX_Result_Success && !evaluated);
     proxy.Release();
     proxy.ResetRecording(&commands);
@@ -270,9 +250,13 @@ int main()
     assert(DlssNr::ReadStatus(DlssNr::Backend::Dx12).running);
     DlssNr::ClearStatus(&output);
     assert(!DlssNr::ReadStatus(DlssNr::Backend::Dx12).running);
-    const auto retryBefore = DlssNr::RetryGeneration();
+    const auto requestsBefore = DlssNr::ReadControlRequests();
     DlssNr::RetryAfterFailure();
-    assert(DlssNr::RetryGeneration() == retryBefore + 1);
+    DlssNr::RequestCapture(8);
+    const auto requestsAfter = DlssNr::ReadControlRequests();
+    assert(requestsAfter.retryGeneration == requestsBefore.retryGeneration + 1);
+    assert(requestsAfter.captureGeneration == requestsBefore.captureGeneration + 1);
+    assert(requestsAfter.captureFrames == 8);
 
     // The shared runner routes resources backwards, then executes stages forwards.
     ID3D12Resource intermediate;

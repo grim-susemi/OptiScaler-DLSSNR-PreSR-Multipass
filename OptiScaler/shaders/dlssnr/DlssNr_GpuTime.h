@@ -1,6 +1,6 @@
 #pragma once
 
-// NR calls and submission/reset notifications are serialized by the owner's mutex.
+// NR calls are serialized by g_nrMutex, including submission/reset notifications.
 // Associate every query pair with its actual submitting queue and GPU completion.
 class DlssNrGpuTime
 {

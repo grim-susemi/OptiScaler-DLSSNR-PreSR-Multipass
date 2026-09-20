@@ -216,6 +216,11 @@ bool DlssNr_Dx12::DispatchCompute(ID3D12GraphicsCommandList* InCmdList, const Dl
 void DlssNr_Dx12::Retire(std::unique_ptr<DlssNr_Dx12> owner)
 {
     if (!owner) return;
+    if (::State::Instance().isShuttingDown)
+    {
+        owner.release(); // No locks, GPU calls or destructors under the loader lock.
+        return;
+    }
     std::lock_guard lock(nrOwnersMutex);
     if (activeNrOwner == owner.get()) activeNrOwner = nullptr;
     DlssNr::ClearStatus(owner.get());
@@ -238,11 +243,33 @@ bool DlssNr_Dx12::ReadyToDestroy()
         if (!model.Idle()) return false;
     for (const auto& slot : _state->late.slots)
         if (slot.submitted && !_state->late.Finished(slot)) return false;
-    return true;
+    return _state->late.dx11.Idle();
+}
+
+void DlssNr_Dx12::FinishSubmitted()
+{
+    std::lock_guard lock(_state->mutex);
+    _state->lifetime.FinishSubmitted();
+    _state->deferredSr.lifetime.FinishSubmitted();
+    _state->captureFrames.FinishSubmitted();
+    if (_state->enlarger)
+        _state->enlarger->lifetime.FinishSubmitted();
+    for (auto& old : _state->retiredEnlargers)
+        old->lifetime.FinishSubmitted();
+    for (auto& model : _state->nr.models)
+        model.FinishSubmitted();
 }
 
 DlssNr_Dx12::~DlssNr_Dx12()
 {
+    if (::State::Instance().isShuttingDown)
+    {
+        _state.release();
+        for (auto& heap : _frameHeaps)
+            heap.Abandon();
+        GpuTime.release();
+        return;
+    }
     std::lock_guard lock(nrOwnersMutex);
     std::erase(nrOwners, this);
     if (activeNrOwner == this)
@@ -254,10 +281,7 @@ DlssNr_Dx12::~DlssNr_Dx12()
         LOG_WARN("DLSS-NR: abandoning GPU ownership with unresolved command recordings at teardown");
         _state.release();
         for (auto& heap : _frameHeaps)
-        {
-            if (heap.GetHeapCSU()) heap.GetHeapCSU()->AddRef();
-            if (heap.GetHeapRtv()) heap.GetHeapRtv()->AddRef();
-        }
+            heap.Abandon();
         _rootSignature = nullptr;
         _pipelineState = nullptr;
         _constantBuffer = nullptr;
@@ -572,6 +596,8 @@ namespace DlssNr
 {
 void FinishedPictureResetCommandList(ID3D12CommandList* cmd)
 {
+    if (::State::Instance().isShuttingDown)
+        return;
     std::lock_guard lock(nrOwnersMutex);
     NrNotificationScope notification;
     const auto owners = nrOwners;
@@ -580,6 +606,8 @@ void FinishedPictureResetCommandList(ID3D12CommandList* cmd)
 }
 void FinishedPictureSubmitted(ID3D12CommandQueue* queue, UINT count, ID3D12CommandList* const* lists)
 {
+    if (::State::Instance().isShuttingDown)
+        return;
     std::lock_guard lock(nrOwnersMutex);
     NrNotificationScope notification;
     const auto owners = nrOwners;
@@ -588,6 +616,8 @@ void FinishedPictureSubmitted(ID3D12CommandQueue* queue, UINT count, ID3D12Comma
 }
 bool WaitForFinishedPicture()
 {
+    if (::State::Instance().isShuttingDown)
+        return false;
     std::lock_guard lock(nrOwnersMutex);
     NrNotificationScope notification;
     bool ready = true;
@@ -606,6 +636,8 @@ static DXGI_COLOR_SPACE_TYPE ReadFinishedSpace(IDXGISwapChain* swapchain, ID3D12
 }
 void ApplyToFinishedPicture(IDXGISwapChain* swapchain, ID3D12CommandQueue* queue)
 {
+    if (::State::Instance().isShuttingDown)
+        return;
     Microsoft::WRL::ComPtr<IDXGISwapChain3> chain;
     Microsoft::WRL::ComPtr<ID3D12Resource> picture;
     auto space = DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
@@ -625,6 +657,8 @@ void ApplyToFinishedPicture(IDXGISwapChain* swapchain, ID3D12CommandQueue* queue
 }
 void ApplyToStreamlinePicture(IDXGISwapChain* swapchain, ID3D12Resource* picture, ID3D12CommandQueue* queue)
 {
+    if (::State::Instance().isShuttingDown)
+        return;
     if (!swapchain || !picture || !queue)
         return;
     const auto space = ReadFinishedSpace(swapchain, picture);
@@ -634,6 +668,8 @@ void ApplyToStreamlinePicture(IDXGISwapChain* swapchain, ID3D12Resource* picture
 }
 void ApplyToFinishedPictureDx11(IDXGISwapChain* swapchain)
 {
+    if (::State::Instance().isShuttingDown)
+        return;
     std::lock_guard lock(nrOwnersMutex);
     if (activeNrOwner)
         activeNrOwner->ApplyFinishedDx11(swapchain);
@@ -653,5 +689,28 @@ std::string DeferredDlssStatus()
     std::lock_guard lock(nrOwnersMutex);
     return activeNrOwner ? activeNrOwner->DeferredStatus() : "not started";
 }
-void Shutdown() { WaitForFinishedPicture(); }
+bool Shutdown()
+{
+    if (::State::Instance().isShuttingDown)
+        return false;
+    const auto deadline = GetTickCount64() + 1000;
+    do
+    {
+        {
+            std::lock_guard lock(nrOwnersMutex);
+            // Callbacks may retire a child codec. Defer owner destruction until traversal ends.
+            {
+                NrNotificationScope notification;
+                for (auto& owner : RetiredNrOwners())
+                    owner->FinishSubmitted();
+            }
+            if (nrOwners.empty())
+                return true;
+        }
+        // Submission/reset hooks must be able to make progress while we drain.
+        Sleep(1);
+    } while (GetTickCount64() < deadline);
+    LOG_WARN("NR shutdown deferred: owners or GPU recordings remain; keeping the NGX runtime alive");
+    return false;
+}
 } // namespace DlssNr

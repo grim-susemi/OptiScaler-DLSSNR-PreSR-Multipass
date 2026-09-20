@@ -5,6 +5,17 @@
 #include "nvsdk_ngx_vk.h"
 #include <dlssnr/DlssNrPipeline_Vk.h>
 
+IFeature_Vk::~IFeature_Vk()
+{
+    if (State::Instance().isShuttingDown)
+    {
+        NeuralRendering.release();
+        OutputScaler.release();
+        RCAS.release();
+        Magnifier.release();
+    }
+}
+
 bool IFeature_Vk::Init(VkInstance InInstance, VkPhysicalDevice InPD, VkDevice InDevice, VkCommandBuffer InCmdBuffer,
                        PFN_vkGetInstanceProcAddr InGIPA, PFN_vkGetDeviceProcAddr InGDPA,
                        NVSDK_NGX_Parameter* InParameters)

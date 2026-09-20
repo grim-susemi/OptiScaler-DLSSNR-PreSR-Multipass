@@ -50,13 +50,15 @@ auto DlssNr_Dx12::State::WaitForFinishedPicture() -> bool
     {
         if (!slot.submitted || late.Finished(slot))
             continue;
+        if (slot.fence->GetCompletedValue() == UINT64_MAX)
+            return false; // Device removal is not a completed submission.
         HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         if (!event)
             return false;
         const auto hr = slot.fence->SetEventOnCompletion(slot.done, event);
         const bool finished = SUCCEEDED(hr) && WaitForSingleObject(event, 5000) == WAIT_OBJECT_0;
         CloseHandle(event);
-        if (!finished)
+        if (!finished || !late.Finished(slot))
             return false;
     }
     return late.dx11.Drain();

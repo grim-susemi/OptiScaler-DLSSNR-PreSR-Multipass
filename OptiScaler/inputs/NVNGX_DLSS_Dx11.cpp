@@ -19,7 +19,8 @@
 #include <misc/IdentifyGpu.h>
 
 static ID3D11Device* D3D11Device = nullptr;
-static ankerl::unordered_dense::map<unsigned int, ContextData<IFeature_Dx11>> Dx11Contexts;
+// Leftover bridge/GPU owners must not run destructors under the loader lock.
+static auto& Dx11Contexts = *new ankerl::unordered_dense::map<unsigned int, ContextData<IFeature_Dx11>>;
 static int evalCounter = 0;
 static bool shutdown = false;
 static bool _skipInit = false;
@@ -323,6 +324,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_Init_with_ProjectID(
 
 NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_Shutdown()
 {
+    if (State::Instance().isShuttingDown)
+        return NVSDK_NGX_Result_Success;
     shutdown = true;
 
     State::Instance().currentFeature = nullptr;
@@ -352,6 +355,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_Shutdown()
 
 NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_Shutdown1(ID3D11Device* InDevice)
 {
+    if (State::Instance().isShuttingDown)
+        return NVSDK_NGX_Result_Success;
     shutdown = true;
     State::Instance().currentFeature = nullptr;
     Dx11Contexts.clear();
@@ -613,6 +618,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_CreateFeature(ID3D11DeviceContext
 
 NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D11_ReleaseFeature(NVSDK_NGX_Handle* InHandle)
 {
+    if (State::Instance().isShuttingDown)
+        return NVSDK_NGX_Result_Success;
     if (!InHandle)
         return NVSDK_NGX_Result_Success;
 

@@ -372,7 +372,40 @@ try
         completed.Retire([owner = std::move(owner)] {});
         expect(captured.expired(), "completed retirement retained its captured owner");
     }
-    std::puts("NR GPU lifetime smoke passed (including dormant and shared model generations)");
+    {
+        // Shutdown may seal completed submitted lists, but not missing submissions or live GPU work.
+        DlssNr::GpuLifetime life;
+        bool destroyed = false;
+        life.Record(commands.Get());
+        life.Retire([&] { destroyed = true; });
+        life.FinishSubmitted();
+        expect(!destroyed && !life.Idle(), "shutdown discarded an unsubmitted recording");
+        ComPtr<ID3D12Fence> blocked;
+        check(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&blocked)));
+        check(queue->Wait(blocked.Get(), 1));
+        queue->ExecuteCommandLists(1, lists);
+        life.Submitted(queue.Get(), 1, lists);
+        life.FinishSubmitted();
+        expect(!destroyed && !life.Idle(), "shutdown freed GPU work before completion");
+        check(blocked->Signal(1));
+        wait();
+        expect(!life.Idle(), "ordinary collection lost replay protection");
+        life.FinishSubmitted();
+        expect(destroyed && life.Idle(), "shutdown could not reclaim the final completed recording");
+    }
+    {
+        DlssNr::GpuLifetime life;
+        life.Record(commands.Get());
+        queue->ExecuteCommandLists(1, lists);
+        life.Submitted(queue.Get(), 1, lists);
+        wait();
+        ComPtr<ID3D12Device5> removable;
+        check(device.As(&removable));
+        removable->RemoveDevice();
+        life.FinishSubmitted();
+        expect(!life.Idle(), "shutdown accepted a removed-device fence as GPU completion");
+    }
+    std::puts("NR GPU lifetime smoke passed (generations, shutdown, delayed/unsubmitted work, device removal)");
     return 0;
 }
 catch (const std::exception& e) { std::fprintf(stderr, "%s\n", e.what()); return 1; }

@@ -18,6 +18,8 @@ using Create = HRESULT (*)(IDXGIFactory*, IUnknown*, DXGI_SWAP_CHAIN_DESC*, IDXG
 
 void RegisterQueue(HRESULT result, bool handled, IUnknown* device, IDXGISwapChain* swapchain)
 {
+    if (State::Instance().isShuttingDown)
+        return;
     // Keep the application's render queue, not DLSSG's asynchronous presentation queue.
     if (FAILED(result) || !handled || !device || !swapchain) return;
     Microsoft::WRL::ComPtr<ID3D12CommandQueue> queue;
@@ -42,6 +44,8 @@ template <bool Local> struct Hooks
 
     static void Apply(IDXGISwapChain* swapchain, UINT flags, bool skip)
     {
+        if (State::Instance().isShuttingDown)
+            return;
         const auto& cfg = *Config::Instance();
         if (skip || (flags & DXGI_PRESENT_TEST) || !cfg.DlssNrEnabled.value_or_default() ||
             !cfg.DlssNrFinishedPicture.value_or_default()) return;

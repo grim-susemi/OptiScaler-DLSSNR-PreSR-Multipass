@@ -75,6 +75,7 @@ class FrameCapture
     void Submitted(ID3D12CommandQueue* queue, UINT count, ID3D12CommandList* const* lists)
     { lifetime_.Submitted(queue, count, lists); }
     void ResetRecording(ID3D12CommandList* commands) { lifetime_.ResetRecording(commands); }
+    void FinishSubmitted() { lifetime_.FinishSubmitted(); }
 
     void record(ID3D12GraphicsCommandList* cmd, ID3D12Device* device, ID3D12Resource* before,
                 D3D12_RESOURCE_STATES beforeState, ID3D12Resource* after, D3D12_RESOURCE_STATES afterState)

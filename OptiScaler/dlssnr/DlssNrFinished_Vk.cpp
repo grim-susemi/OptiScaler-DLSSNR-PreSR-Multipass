@@ -412,6 +412,8 @@ void FinishedVk::ResetPool(VkCommandPool pool)
 bool FinishedVk::Present(VkQueue queue, VkPresentInfoKHR* present) { return impl->Present(queue, present); }
 void FinishedVkSwapchain(VkDevice device, VkSwapchainKHR swapchain, const VkSwapchainCreateInfoKHR& info)
 {
+    if (State::Instance().isShuttingDown)
+        return;
     std::lock_guard lock(finishedMutex);
     screen = {};
     screen.device = device;
@@ -428,24 +430,32 @@ void FinishedVkSwapchain(VkDevice device, VkSwapchainKHR swapchain, const VkSwap
 }
 void FinishedVkSubmitted(VkQueue queue, VkCommandBuffer cmd)
 {
+    if (State::Instance().isShuttingDown)
+        return;
     std::lock_guard lock(finishedMutex);
     for (auto* owner : owners)
         owner->Submitted(queue, cmd);
 }
 void FinishedVkReset(VkCommandBuffer cmd)
 {
+    if (State::Instance().isShuttingDown)
+        return;
     std::lock_guard lock(finishedMutex);
     for (auto* owner : owners)
         owner->Reset(cmd);
 }
 void FinishedVkResetPool(VkCommandPool pool)
 {
+    if (State::Instance().isShuttingDown)
+        return;
     std::lock_guard lock(finishedMutex);
     for (auto* owner : owners)
         owner->ResetPool(pool);
 }
 void FinishedVkPresent(VkQueue queue, VkPresentInfoKHR* present)
 {
+    if (State::Instance().isShuttingDown)
+        return;
     std::lock_guard lock(finishedMutex);
     for (auto* owner : owners)
         if (owner->Present(queue, present))

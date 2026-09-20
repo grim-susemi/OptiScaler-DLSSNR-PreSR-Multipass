@@ -33,5 +33,8 @@ class GpuLifetime
     void Retire(std::function<void()> destroy);
     void Collect();
     bool Idle();
+    // Retired owners only: completed submissions can no longer be replayed by this owner.
+    // Unsubmitted recordings and failed/removed-device fences remain unresolved.
+    void FinishSubmitted();
 };
 }

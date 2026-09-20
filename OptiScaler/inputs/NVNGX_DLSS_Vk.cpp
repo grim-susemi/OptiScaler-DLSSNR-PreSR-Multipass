@@ -23,7 +23,8 @@ VkDevice vkDevice;
 PFN_vkGetInstanceProcAddr vkGIPA;
 PFN_vkGetDeviceProcAddr vkGDPA;
 
-static ankerl::unordered_dense::map<unsigned int, ContextData<IFeature_Vk>> VkContexts;
+// Explicit shutdown drains Vulkan. CRT detach must not wait on a GPU or call a torn-down device.
+static auto& VkContexts = *new ankerl::unordered_dense::map<unsigned int, ContextData<IFeature_Vk>>;
 static int evalCounter = 0;
 static bool shutdown = false;
 static bool _skipInit = false;
@@ -935,6 +936,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_VULKAN_CreateFeature(VkCommandBuffer In
 
 NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_VULKAN_ReleaseFeature(NVSDK_NGX_Handle* InHandle)
 {
+    if (State::Instance().isShuttingDown)
+        return NVSDK_NGX_Result_Success;
     if (!InHandle)
         return NVSDK_NGX_Result_Success;
 
@@ -1088,6 +1091,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_VULKAN_EvaluateFeature(VkCommandBuffer 
 
 NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_VULKAN_Shutdown(void)
 {
+    if (State::Instance().isShuttingDown)
+        return NVSDK_NGX_Result_Success;
     shutdown = true;
 
     // Release feature-owned shaders/model resources while the Vulkan device and NGX are alive.
@@ -1123,6 +1128,8 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_VULKAN_Shutdown(void)
 
 NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_VULKAN_Shutdown1(VkDevice InDevice)
 {
+    if (State::Instance().isShuttingDown)
+        return NVSDK_NGX_Result_Success;
     shutdown = true;
 
     if (InDevice != VK_NULL_HANDLE)

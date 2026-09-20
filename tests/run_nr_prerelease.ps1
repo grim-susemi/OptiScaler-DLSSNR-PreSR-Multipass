@@ -5,6 +5,7 @@ $out = Join-Path ([IO.Path]::GetTempPath()) ('nr-prerelease-' + [guid]::NewGuid(
 New-Item -ItemType Directory $out | Out-Null
 Push-Location $repo
 try {
+    & "$PSScriptRoot/run_nr_shutdown.ps1"
     & "$PSScriptRoot/run_nr_gpu_lifetime.ps1"
     & "$PSScriptRoot/dlssnr_proxy/run.ps1"
     & "$PSScriptRoot/mfg_unlock/run.ps1"

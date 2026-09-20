@@ -21,6 +21,7 @@ enum class FGNvngxReplacement { None, Other };
 struct Quirks { bool enabled = false; bool operator[](GameQuirk) const { return enabled; } };
 struct State
 {
+    bool isShuttingDown = false;
     Quirks gameQuirks;
     FGNvngxReplacement activeFgNvngx = FGNvngxReplacement::None;
     static State& Instance() { static State state; return state; }
@@ -152,9 +153,13 @@ int main() try
     Config::Instance()->DlssNrFinishedPicture.value = true;
     Plugin<1>::handled = false;
     Check(localPresent(localChain.Get(), 0, 0, nullptr, skip));
-    Expect(Plugin<0>::calls == 6 && Plugin<1>::calls == 11, "Lost or duplicated an original present");
+    Plugin<1>::handled = true;
+    State::Instance().isShuttingDown = true;
+    Check(localPresent(localChain.Get(), 0, 0, nullptr, skip));
+    State::Instance().isShuttingDown = false;
+    Expect(Plugin<0>::calls == 6 && Plugin<1>::calls == 12, "Lost or duplicated an original present");
     puts("PASS: KCD2-only real FG gate; local legacy + native Hwnd registration; separate plugin buffers; "
-         "PQ/10-bit metadata; edit before FG; skip/disabled guards");
+         "PQ/10-bit metadata; edit before FG; skip/disabled/shutdown guards");
     return 0;
 }
 catch (const std::exception& error) { puts(error.what()); return 1; }

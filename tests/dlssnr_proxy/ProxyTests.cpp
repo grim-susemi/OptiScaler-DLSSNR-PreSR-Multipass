@@ -63,6 +63,7 @@ void DlssNr::GpuLifetime::Collect()
     impl->retired.clear();
 }
 bool DlssNr::GpuLifetime::Idle() { return !impl->pending; }
+void DlssNr::GpuLifetime::FinishSubmitted() { Collect(); }
 
 // NVIDIA's DX11 table accepts bridge resources through void*, but ignores DX12 setters.
 struct Dx11Parameters : Mock::Params

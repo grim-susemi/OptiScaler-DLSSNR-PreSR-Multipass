@@ -1,4 +1,4 @@
-> **v0.8.5 prerelease:** [changes and validation](docs/RELEASE-v0.8.5.md).
+> **v0.8.6 prerelease:** [shutdown fixes and validation](docs/RELEASE-v0.8.6.md).
 
 <div align="center">
 

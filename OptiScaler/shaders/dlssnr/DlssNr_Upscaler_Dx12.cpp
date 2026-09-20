@@ -131,9 +131,9 @@ struct PrivateUpscalerDx12::Impl
     NVSDK_NGX_Handle* feature = nullptr;
     ~Impl()
     {
-        if (feature)
+        if (feature && NVNGXProxy::D3D12_ReleaseFeature())
             NVNGXProxy::D3D12_ReleaseFeature()(feature);
-        if (parameters)
+        if (parameters && NVNGXProxy::D3D12_DestroyParameters())
             NVNGXProxy::D3D12_DestroyParameters()(parameters);
         if (fsr2Ready)
             ffxFsr2ContextDestroy(&fsr2);
@@ -408,7 +408,11 @@ struct PrivateUpscalerDx12::Impl
     }
 };
 PrivateUpscalerDx12::PrivateUpscalerDx12(PrivateUpscaler selected) : impl(std::make_unique<Impl>(selected)) {}
-PrivateUpscalerDx12::~PrivateUpscalerDx12() = default;
+PrivateUpscalerDx12::~PrivateUpscalerDx12()
+{
+    if (State::Instance().isShuttingDown)
+        impl.release();
+}
 const char* PrivateUpscalerDx12::Name() const
 {
     return impl->rayReconstruction ? "DLSS RR" : PrivateUpscalerName(impl->backend);

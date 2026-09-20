@@ -106,6 +106,12 @@ DlssNr_Vk::DlssNr_Vk(std::string InName, VkDevice InDevice, VkPhysicalDevice InP
 
 DlssNr_Vk::~DlssNr_Vk()
 {
+    if (State::Instance().isShuttingDown)
+    {
+        _finished.release();
+        _model.release();
+        return;
+    }
     _finished.reset();
     _model.reset();
     if (_finishedPipeline) vkDestroyPipeline(_device, _finishedPipeline, nullptr);

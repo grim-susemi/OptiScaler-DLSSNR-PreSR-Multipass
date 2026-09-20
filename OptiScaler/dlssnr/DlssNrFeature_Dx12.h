@@ -26,5 +26,6 @@ void ApplyToFinishedPictureDx11(IDXGISwapChain* swapchain);
 void FinishedPictureColorSpace(IDXGISwapChain* swapchain, DXGI_COLOR_SPACE_TYPE colorSpace);
 
 std::string DeferredDlssStatus();
-void Shutdown();
+// Outside DllMain only. Returns false rather than releasing a runtime with unresolved owners/work.
+bool Shutdown();
 } // namespace DlssNr

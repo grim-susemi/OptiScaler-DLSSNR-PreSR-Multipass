@@ -378,7 +378,14 @@ void IFeature_Dx11::ReadDetailedGpuTimes(void* deviceContextVoid, std::vector<De
 IFeature_Dx11::~IFeature_Dx11()
 {
     if (State::Instance().isShuttingDown)
+    {
+        OutputScaler.release();
+        RCAS.release();
+        Bias.release();
+        Magnifier.release();
+        UpscalerTime.release();
         return;
+    }
 
     Imgui.reset();
     OutputScaler.reset();

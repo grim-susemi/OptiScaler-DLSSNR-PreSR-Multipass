@@ -238,4 +238,12 @@ bool GpuLifetime::Idle()
     Collect();
     return !impl->collecting && impl->recordings.empty();
 }
+void GpuLifetime::FinishSubmitted()
+{
+    std::lock_guard lock(impl->mutex);
+    for (auto& use : impl->recordings)
+        if (!use->completions.empty() && use->Finished())
+            use->open = false;
+    Collect();
+}
 }

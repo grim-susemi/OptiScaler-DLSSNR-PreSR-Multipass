@@ -74,6 +74,7 @@ class DlssNr_Dx12 : public Shader_Dx12, public DlssNr_Common
     ~DlssNr_Dx12();
     static void Retire(std::unique_ptr<DlssNr_Dx12> owner);
     bool ReadyToDestroy();
+    void FinishSubmitted();
 
     // The pass. Resources in, and nothing read from anywhere the caller cannot see.
     //

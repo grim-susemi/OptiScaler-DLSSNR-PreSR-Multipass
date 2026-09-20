@@ -19,6 +19,8 @@ struct ProxyState
     DlssNr::ModelSettings settings {};
     unsigned int width = 0, height = 0;
     uint64_t creationEpoch = 0;
+    std::function<bool()> creationComplete;
+    bool creationReady = false;
     ID3D12Device* device = nullptr;
     bool failed = false;
     bool reset = true;
@@ -82,6 +84,11 @@ struct Context::Impl
 {
     ProxyState state;
     DlssNr::GpuLifetime lifetime;
+    bool CreationReady(uint64_t epoch)
+    {
+        return state.creationReady = state.creationReady || epoch != state.creationEpoch ||
+                                     (state.creationComplete && state.creationComplete());
+    }
     void RetireState();
     unsigned int Prepare(ID3D12GraphicsCommandList* cmdList, ID3D12Device* device, unsigned int width,
                          unsigned int height, const ModelSettings& settings, uint64_t submissionEpoch, bool* ready);
@@ -181,6 +188,7 @@ unsigned int Context::Impl::Prepare(ID3D12GraphicsCommandList* cmdList, ID3D12De
         state.width = width;
         state.height = height;
         state.creationEpoch = submissionEpoch;
+        state.creationComplete = lifetime.CompletionProbe(cmdList);
         LOG_INFO("DLSS-NR: feature created at {}x{} through {}", width, height,
                  state.compatibility ? "direct compatibility runtime" : "NVIDIA NGX driver");
 
@@ -188,7 +196,7 @@ unsigned int Context::Impl::Prepare(ID3D12GraphicsCommandList* cmdList, ID3D12De
         return (unsigned int) NVSDK_NGX_Result_Success;
     }
 
-    *ready = submissionEpoch != state.creationEpoch;
+    *ready = CreationReady(submissionEpoch);
     return (unsigned int) NVSDK_NGX_Result_Success;
 }
 
@@ -268,7 +276,7 @@ unsigned int Context::Prepare(ID3D12GraphicsCommandList* cmdList, ID3D12Device* 
 bool Context::HasFeature() const { return _impl->state.feature != nullptr; }
 bool Context::Ready(uint64_t epoch) const
 {
-    return HasFeature() && !_impl->state.failed && epoch != _impl->state.creationEpoch;
+    return HasFeature() && !_impl->state.failed && _impl->CreationReady(epoch);
 }
 void Context::Collect() { _impl->lifetime.Collect(); }
 

@@ -189,7 +189,8 @@ ShaderPass_Dx12 MakeDlssNrPass(DlssNr_Dx12& shader, ID3D12Device* device, ID3D12
                 // A disabled/failed optional pass must still provide the next stage with the original frame.
                 shader.SetBufferState(commandList, D3D12_RESOURCE_STATE_COPY_SOURCE);
                 NrBarrier(commandList, output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
-                commandList->CopyResource(output, input);
+                DlssNr::CopyActiveColor(commandList, output, input,
+                                        { (unsigned)input->GetDesc().Width, input->GetDesc().Height });
                 NrBarrier(commandList, output, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             }
             return true;

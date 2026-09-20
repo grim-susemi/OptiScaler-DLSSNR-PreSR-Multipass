@@ -39,10 +39,10 @@ struct GpuLifetime::Impl
         bool signalFailed = false;
         // Only the latest value on each queue is needed, including when the list is replayed.
         std::map<std::shared_ptr<Timeline>, UINT64> completions;
-        bool Complete() const
+        bool Complete() const { return !open && Finished(); }
+        bool Finished() const
         {
-            // A closed list can be replayed until reset, even after its first execution completes.
-            return !open && !signalFailed && std::all_of(completions.begin(), completions.end(), [](const auto& c) {
+            return !signalFailed && std::all_of(completions.begin(), completions.end(), [](const auto& c) {
                 const auto& [timeline, value] = c;
                 const auto completed = timeline->fence->GetCompletedValue();
                 return completed != UINT64_MAX && completed >= value;
@@ -140,6 +140,18 @@ void GpuLifetime::Record(ID3D12GraphicsCommandList* commands)
     }
     impl->currentGeneration.push_back(use);
     impl->recordings.push_back(std::move(use));
+}
+std::function<bool()> GpuLifetime::CompletionProbe(ID3D12GraphicsCommandList* commands)
+{
+    std::lock_guard lock(impl->mutex);
+    commands = Identity(commands);
+    for (const auto& use : impl->recordings)
+        if (use->open && use->commands == commands)
+            return [this, use] {
+                std::lock_guard lock(impl->mutex);
+                return !use->completions.empty() && use->Finished();
+            };
+    return [] { return false; };
 }
 void GpuLifetime::Submitted(ID3D12CommandQueue* queue, UINT count, ID3D12CommandList* const* lists)
 {

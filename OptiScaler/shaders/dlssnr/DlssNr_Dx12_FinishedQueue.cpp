@@ -146,6 +146,12 @@ auto DlssNr_Dx12::State::ApplyToFinishedPicture(IDXGISwapChain* swapchain, ID3D1
     std::lock_guard<std::recursive_mutex> lock(mutex);
     if (!swapchain || !queue)
         return;
+    if (!Config::Instance()->DlssNrFinishedPicture.value_or_default() ||
+        !Config::Instance()->DlssNrEnabled.value_or_default())
+    {
+        late.Cancel();
+        return;
+    }
     // Native Streamline owns an app-facing buffer set. Its before-present hook handles NR.
     // Editing the underlying display swapchain here races/is overwritten by DLSSG's own copies.
     if (DlssNr::StreamlinePicture::RenderQueue(swapchain))

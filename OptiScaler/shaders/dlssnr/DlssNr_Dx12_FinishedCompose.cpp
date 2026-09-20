@@ -44,16 +44,11 @@ auto DlssNr_Dx12::State::ApplyFinishedColor(ID3D12Resource* color, ID3D12Command
             late.reset = true;
             continue;
         }
-        if (!DlssNr::FinishedInputReady(slot.producerQueue.Get() == realQueue,
-                                        slot.fence->GetCompletedValue(), slot.ready))
-        {
-            if (!late.reportedQueueDelay)
-            {
-                LOG_INFO("DLSS-NR finished picture: skipping unfinished cross-queue input to avoid a present/render fence cycle");
-                late.reportedQueueDelay = true;
-            }
+        const auto completed = slot.fence->GetCompletedValue();
+        if (completed == UINT64_MAX ||
+            (gameFrameHandoff && !DlssNr::FinishedInputReady(slot.producerQueue.Get() == realQueue,
+                                                            completed, slot.ready)))
             continue;
-        }
         if (slot.residualOnly == residualOnly && slot.frame.OutputWidth == desc.Width &&
             slot.frame.OutputHeight == desc.Height && (!latest || slot.serial > latest->serial))
             latest = &slot;
@@ -71,6 +66,15 @@ auto DlssNr_Dx12::State::ApplyFinishedColor(ID3D12Resource* color, ID3D12Command
     }
     if (!latest)
         return false; // loading screen, another swapchain, or this real frame was already consumed
+    // A submitted producer has already enqueued its signal. Native handoffs above never wait.
+    if (!DlssNr::FinishedInputReady(latest->producerQueue.Get() == realQueue,
+                                    latest->fence->GetCompletedValue(), latest->ready) &&
+        FAILED(queue->Wait(latest->fence.Get(), latest->ready)))
+    {
+        late.reset = true;
+        late.Say("The graphics queue stopped. Restart the game to retry.");
+        return false;
+    }
     auto& slot = *latest;
     const bool holdFinished = slot.residualOnly && Config::Instance()->DlssNrHoldFrame.value_or_default() &&
                               inputHold.active;
@@ -106,7 +110,7 @@ auto DlssNr_Dx12::State::ApplyFinishedColor(ID3D12Resource* color, ID3D12Command
     for (auto& other : late.slots)
         if (other.submitted && other.serial <= slot.serial)
             other.pending = false;
-    // Input is complete or ordered earlier on this queue. Never insert a wait on future render work here.
+    // The selected input is complete or ordered before composition on this queue.
     if (FAILED(slot.allocator->Reset()) ||
         FAILED(slot.commands->Reset(slot.allocator.Get(), nullptr)))
     {

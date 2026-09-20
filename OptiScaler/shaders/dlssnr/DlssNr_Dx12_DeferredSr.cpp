@@ -344,6 +344,13 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
     frame.Reset = UInt(source, NVSDK_NGX_Parameter_Reset) != 0 || g.reset;
     frame.MvScaleX = Float(source, NVSDK_NGX_Parameter_MV_Scale_X, 1);
     frame.MvScaleY = Float(source, NVSDK_NGX_Parameter_MV_Scale_Y, 1);
+    if (!std::isfinite(frame.MvScaleX) || frame.MvScaleX == 0)
+        frame.MvScaleX = 1.0f;
+    if (!std::isfinite(frame.MvScaleY) || frame.MvScaleY == 0)
+        frame.MvScaleY = 1.0f;
+    frame.ExposureTexture = GetUpscalerResource_Dx12(source, NVSDK_NGX_Parameter_ExposureTexture);
+    frame.ExposureState =
+        Config::Instance()->ExposureResourceBarrier.value_or(D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     frame.PreExposure = std::max(Float(source, NVSDK_NGX_Parameter_DLSS_Pre_Exposure, 1), 1e-4f);
     const auto before = owner.nr.successfulDispatches;
     {
@@ -412,6 +419,7 @@ auto DlssNr_Dx12::State::DeferredSrContext::Before(ID3D12GraphicsCommandList* cm
             accum.Width = g.w; accum.Height = g.h;
             const float configuredBlend = cfg.DlssNrResidualAcrossRrBlend.value_or_default();
             accum.ResidualBlend = std::isfinite(configuredBlend) ? std::clamp(configuredBlend, .01f, 1.0f) : .08f;
+            accum.ResidualConfidenceSensitivity = cfg.DlssNrResidualConfidenceSensitivity.value_or_default();
             accum.ResidualHistoryValid = g.accumulationValid && !frame.Reset;
             accum.GuideWidth = motionRegion.width; accum.GuideHeight = motionRegion.height;
             // v0.7.7 convention: convert the game's pixel displacement to input-frame UV displacement.

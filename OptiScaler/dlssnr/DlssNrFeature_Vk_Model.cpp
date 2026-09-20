@@ -186,6 +186,8 @@ void ModelVk::Impl::Shutdown()
     state.proxySmall.Destroy(state.device);
     state.outputNative.Destroy(state.device);
     state.keep.Destroy(state.device);
+    state.exposureMeter.Destroy(state.device);
+    state.exposure.Destroy(state.device);
 
     state.superUp.reset();
     state.superDown.reset();

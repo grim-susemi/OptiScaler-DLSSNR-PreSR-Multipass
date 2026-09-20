@@ -411,8 +411,9 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
                     D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         }
 
-        const bool resolved = enlargementReady && shader.DispatchPass(cmdList, resolveParams, resolveProxy, resolveAnswer,
-                                                  resolveOriginal, motionIn, nullptr, resolveTarget, nullptr);
+        const bool resolved =
+            enlargementReady && shader.DispatchPass(cmdList, resolveParams, resolveProxy, resolveAnswer,
+                                                    resolveOriginal, encoded.exposure, nullptr, resolveTarget, nullptr);
         compositionSucceeded = resolved;
 
         if (resolved && !targetSupportsUav)

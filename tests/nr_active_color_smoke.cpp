@@ -61,10 +61,11 @@ D3D12_TEXTURE_COPY_LOCATION location(ID3D12Resource* resource)
     return result;
 }
 
-void run(ID3D12Device* device, unsigned int allocationW, unsigned int allocationH,
-         unsigned int activeW, unsigned int activeH, bool uav, bool writeBack)
+void run(ID3D12Device* device, unsigned int allocationW, unsigned int allocationH, unsigned int activeW,
+         unsigned int activeH, bool uav, bool writeBack, unsigned mips = 1)
 {
-    const auto desc = texture(allocationW, allocationH, uav);
+    auto desc = texture(allocationW, allocationH, uav);
+    desc.MipLevels = static_cast<UINT16>(mips);
     const auto active = DlssNr::PreSrColorExtent(desc, activeW, activeH);
     expect(active.has_value(), "valid active extent rejected");
     auto game = create(device, desc, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST);
@@ -188,6 +189,8 @@ int main() try
     run(device.Get(), 3840, 2160, 2227, 1253, false, true);
     run(device.Get(), 1920, 1080, 1920, 1080, false, true);
     run(device.Get(), 2560, 1440, 2558, 1439, false, false);
+    run(device.Get(), 256, 128, 256, 128, true, true, 8);
+    run(device.Get(), 256, 128, 256, 128, false, false, 8);
     ComPtr<ID3D12InfoQueue> messages;
     if (debugLayer && SUCCEEDED(device.As(&messages)))
     {

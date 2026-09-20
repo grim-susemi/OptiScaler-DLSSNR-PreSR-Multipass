@@ -180,6 +180,10 @@ auto DlssNr_Dx12::State::LateContext::Capture(ID3D12GraphicsCommandList* cmd, NV
     params->Get(NVSDK_NGX_Parameter_DLSS_Input_MV_SubrectBase_Y, &frame.MotionSubrectBaseY);
     params->Get(NVSDK_NGX_Parameter_MV_Scale_X, &frame.MvScaleX);
     params->Get(NVSDK_NGX_Parameter_MV_Scale_Y, &frame.MvScaleY);
+    if (!std::isfinite(frame.MvScaleX) || frame.MvScaleX == 0)
+        frame.MvScaleX = 1;
+    if (!std::isfinite(frame.MvScaleY) || frame.MvScaleY == 0)
+        frame.MvScaleY = 1;
     frame.ColourIsLinearHdr = false;
     frame.IndependentCommands = true;
     frame.FinishedPicture = true;
@@ -222,6 +226,7 @@ auto DlssNr_Dx12::State::LateContext::CaptureResidual(ID3D12GraphicsCommandList*
     slot.frame.OutputWidth = (unsigned) clean->GetDesc().Width;
     slot.frame.OutputHeight = clean->GetDesc().Height;
     slot.frame.PreExposure = scale;
+    slot.frame.ExposureTexture = nullptr;
     slot.frame.SubmissionEpoch = ::State::Instance().frameCount;
     slot.residualOnly = true;
     slot.sceneLinear = sceneLinear;

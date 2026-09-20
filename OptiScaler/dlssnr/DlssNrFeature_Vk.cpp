@@ -7,6 +7,7 @@
 #include "DlssNrPipeline_Vk.h"
 #include <nvsdk_ngx_vk.h>
 #include "PassProfiles.h"
+#include "DlssNr_Exposure.h"
 
 #include <Config.h>
 #include <State.h>
@@ -206,9 +207,56 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     Transition(cmdBuffer, state.proxy, VK_IMAGE_LAYOUT_GENERAL);
     Transition(cmdBuffer, state.keep, VK_IMAGE_LAYOUT_GENERAL);
 
+    VkImageView exposureView = VK_NULL_HANDLE;
+    const auto exposureSource = cfg.DlssNrWhitePointSource.value_or_default();
+    const bool gameExposure = frame.Exposure.ImageView && frame.Exposure.Width == 1 && frame.Exposure.Height == 1;
+    if (linearHdr && frame.WhitePointOverride <= 0 && (exposureSource == 3 || (exposureSource == 1 && gameExposure)))
+    {
+        const auto format = VK_FORMAT_R32G32B32A32_SFLOAT;
+        if (state.exposure.Ensure(device, physicalDevice, 1, 1, format) &&
+            (exposureSource != 3 || state.exposureMeter.Ensure(device, physicalDevice, 64, 64, format)))
+        {
+            DlssNrConstants meter {};
+            ExposureConstants(meter, cfg, exposureSource, frame.PreExposure);
+            meter.ExposureSourceWidth = width;
+            meter.ExposureSourceHeight = height;
+            Transition(cmdBuffer, state.exposure, VK_IMAGE_LAYOUT_GENERAL);
+            bool ready;
+            if (exposureSource == 3)
+            {
+                Transition(cmdBuffer, state.exposureMeter, VK_IMAGE_LAYOUT_GENERAL);
+                meter.Mode = DlssNrMode_Meter;
+                meter.Width = meter.Height = 64;
+                ready = state.pass->Dispatch(cmdBuffer, meter, 64, 64, colour->Resource.ImageViewInfo.ImageView,
+                                             VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE,
+                                             state.exposureMeter.info.ImageView, VK_NULL_HANDLE, inputLayout);
+                Transition(cmdBuffer, state.exposureMeter, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                meter.Mode = DlssNrMode_AutoExposure;
+                meter.Width = meter.Height = 1;
+                ready = ready && state.pass->Dispatch(cmdBuffer, meter, 1, 1, state.exposureMeter.info.ImageView,
+                                                      VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE,
+                                                      state.exposure.info.ImageView, VK_NULL_HANDLE);
+            }
+            else
+            {
+                meter.Mode = DlssNrMode_Downsample;
+                meter.Width = meter.Height = 1;
+                ready = state.pass->Dispatch(cmdBuffer, meter, 1, 1, frame.Exposure.ImageView, VK_NULL_HANDLE,
+                                             VK_NULL_HANDLE, VK_NULL_HANDLE, state.exposure.info.ImageView,
+                                             VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL);
+            }
+            Transition(cmdBuffer, state.exposure, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            if (ready)
+            {
+                ExposureConstants(encode, cfg, exposureSource, frame.PreExposure);
+                exposureView = state.exposure.info.ImageView;
+            }
+        }
+    }
+
     // Read the caller's actual input layout; the resolve restores it after writing.
     if (!state.pass->Dispatch(cmdBuffer, encode, width, height, colour->Resource.ImageViewInfo.ImageView,
-                              VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, state.proxy.info.ImageView,
+                              VK_NULL_HANDLE, VK_NULL_HANDLE, exposureView, state.proxy.info.ImageView,
                               state.keep.info.ImageView, inputLayout))
     {
         Fail("the encode dispatch failed");
@@ -350,6 +398,8 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
 
     DlssNrConstants resolve = encode;
     resolve.Mode = DlssNrMode_Resolve;
+    resolve.ReplaceDetailStrength = cfg.DlssNrReplaceDetailStrength.value_or_default();
+    resolve.ModelWorkScale = workScale;
 
     // Downsample the model answer to native before composition.
     ImageVk* resolveProxy = modelInput;
@@ -375,8 +425,8 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     Transition(cmdBuffer, state.keep, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     if (!state.pass->Dispatch(cmdBuffer, resolve, width, height, resolveProxy->info.ImageView,
-                              resolveAnswer->info.ImageView, state.keep.info.ImageView, VK_NULL_HANDLE, target.ImageView, VK_NULL_HANDLE,
-                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
+                              resolveAnswer->info.ImageView, state.keep.info.ImageView, exposureView, target.ImageView,
+                              VK_NULL_HANDLE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
     {
         Fail("the resolve dispatch failed");
         return false;

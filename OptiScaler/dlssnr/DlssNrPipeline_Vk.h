@@ -1,4 +1,5 @@
 #pragma once
+#include <cmath>
 
 #include <upscalers/ShaderPipeline_Vk.h>
 #include <shaders/dlssnr/DlssNr_Vk.h>
@@ -58,6 +59,7 @@ inline DlssNrFrameInfo_Vk FrameInfo(NVSDK_NGX_Parameter* parameters, bool before
     NVSDK_NGX_Resource_VK* motion = nullptr;
     parameters->Get(NVSDK_NGX_Parameter_Depth, (void**) &depth);
     parameters->Get(NVSDK_NGX_Parameter_MotionVectors, (void**) &motion);
+    frame.Exposure = ParameterImage(parameters, NVSDK_NGX_Parameter_ExposureTexture);
     frame.DepthReadWrite = depth && depth->ReadWrite;
     frame.MotionReadWrite = motion && motion->ReadWrite;
     unsigned int flags = 0;
@@ -71,6 +73,10 @@ inline DlssNrFrameInfo_Vk FrameInfo(NVSDK_NGX_Parameter* parameters, bool before
     frame.BeforeUpscale = beforeUpscale;
     parameters->Get(NVSDK_NGX_Parameter_MV_Scale_X, &frame.MvScaleX);
     parameters->Get(NVSDK_NGX_Parameter_MV_Scale_Y, &frame.MvScaleY);
+    if (!std::isfinite(frame.MvScaleX) || frame.MvScaleX == 0)
+        frame.MvScaleX = 1.0f;
+    if (!std::isfinite(frame.MvScaleY) || frame.MvScaleY == 0)
+        frame.MvScaleY = 1.0f;
     parameters->Get(NVSDK_NGX_Parameter_DLSS_Pre_Exposure, &frame.PreExposure);
     parameters->Get(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Width, &frame.RenderSubrectWidth);
     parameters->Get(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Height, &frame.RenderSubrectHeight);

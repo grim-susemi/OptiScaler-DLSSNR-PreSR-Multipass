@@ -27,6 +27,11 @@ struct ModelStateDx12
     // reconstructing it by inverting the tone curve, which is what turned every light in the frame into
     // a string of coloured cells.
     ID3D12Resource* hdrCopy = nullptr;
+    ID3D12Resource* exposureMeter = nullptr;
+    ID3D12Resource* exposure = nullptr;
+    bool exposureReadable = false;
+    unsigned exposureSource = 0;
+    float exposurePreExposure = 1;
 
     // Compact origin-zero pre-SR image, only needed when Color has allocation padding. All codec,
     // hold and capture paths then see the real raster. UAV at rest, retired with the scratch set.

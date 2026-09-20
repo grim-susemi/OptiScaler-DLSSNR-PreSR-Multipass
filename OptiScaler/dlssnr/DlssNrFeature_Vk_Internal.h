@@ -42,6 +42,8 @@ struct VkState
     ImageVk passClamp;
     ImageVk proxy;
     ImageVk keep;
+    ImageVk exposureMeter;
+    ImageVk exposure;
     bool beforeSr = false;
     bool rayReconstruction = false;
 

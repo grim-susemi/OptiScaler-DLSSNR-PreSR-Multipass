@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "DlssNr_MenuSections.h"
+#include "DlssNr_Placement.h"
 #include <Config.h>
 #include <menu/menu_common.h>
 #include <algorithm>
@@ -92,6 +93,30 @@ void RenderInput(Config* config)
 
     HelpMarker("HDR mapping curve. Replace bypasses strength and highlight controls.");
 
+    if (reversible == 2 || reversible == 4)
+        Slider("Restore sharpness", config->DlssNrReplaceDetailStrength, 0.0f, 2.0f, "%.2f", 0.0f);
+
+    const char* exposureNames[] = { "Manual", "Game exposure", "Automatic HDR exposure" };
+    const auto source = config->DlssNrWhitePointSource.value_or_default();
+    int selected = source == 3 ? 2 : source == 1 ? 1 : 0;
+    if (ImGui::Combo("White point source", &selected, exposureNames, 3))
+        config->DlssNrWhitePointSource = selected == 2 ? 3u : static_cast<unsigned>(selected);
+    if (selected)
+    {
+        auto& trim = selected == 2 ? config->DlssNrAutoExposureTrim : config->DlssNrWhitePointTrim;
+        Slider("Exposure trim", trim, 0.001f, 1000.0f, "%.3fx", selected == 2 ? 5.0f : 1.0f,
+               ImGuiSliderFlags_Logarithmic);
+        if (selected == 2)
+            Slider("Highlight protection", config->DlssNrAutoExposureHighlightProtection, 0.0f, 100.0f, "%.0f%%", 0.0f);
+        auto& curve = selected == 2 ? config->DlssNrAutoExposureTrimAnchors : config->DlssNrExposureTrimAnchors;
+        char text[512] {};
+        const auto value = curve.value_or_default();
+        std::memcpy(text, value.data(), std::min(value.size(), sizeof(text) - 1));
+        if (ImGui::InputText("Trim anchors", text, sizeof(text)))
+            curve = std::string(text);
+        HelpMarker("Up to eight base-white-point:trim pairs, e.g. 1:5 100:2. Trim interpolates logarithmically. Clear "
+                   "for a fixed trim.");
+    }
     Slider("Paper white", config->DlssNrWhitePointScale, 0.25f, 2000.0f, "%.2fx", {}, ImGuiSliderFlags_Logarithmic);
     HelpMarker("Higher values darken the NR input; lower values brighten it.");
 }
@@ -218,6 +243,8 @@ void RenderModel(Config* config)
 
 void RenderBlend(Config* config)
 {
+    if (config->DlssNrResidualAcrossRr.value_or_default())
+        Slider("History confidence threshold", config->DlssNrResidualConfidenceSensitivity, 0.0f, 2.0f, "%.3f", 0.0f);
     if (config->DlssNrFinishedPicture.value_or_default() &&
         (config->DlssNrRunBeforeSr.value_or_default() || config->DlssNrDeferredDlss.value_or_default()))
     {
@@ -258,6 +285,12 @@ void RenderBlend(Config* config)
 
 void RenderInspect(Config* config)
 {
+    const auto placement = DlssNr::ResolvePlacement(
+        config->DlssNrRunBeforeSr.value_or_default(), config->DlssNrDeferredDlss.value_or_default(),
+        config->DlssNrResidualAcrossRr.value_or_default(), config->DlssNrFinishedPicture.value_or_default());
+    if (placement.deferred && (config->DlssNrCompare.value_or_default() || config->DlssNrDebugView.value_or_default() ||
+                               config->DlssNrShowSkinMask.value_or_default()))
+        ImGui::TextWrapped("Compare, debug view and skin-mask inspection suspend the separate edit-upscale path.");
     Checkbox("Hold frame", config->DlssNrHoldFrame);
     HelpMarker("Freeze a frame for NR tuning. Later game effects may update; temporal behaviour is not representative.");
 

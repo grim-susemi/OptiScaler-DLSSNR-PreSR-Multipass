@@ -4,6 +4,8 @@
 #include <dlssnr/DlssNr_FinishedReady.h>
 #include <dlssnr/PassProfiles.h>
 
+#include <dlssnr/DlssNr_Exposure.h>
+#include <gpu_time/Vitals.h>
 #include <set>
 #include <wrl/client.h>
 #include <resource_tracking/ResTrack_Dx12.h>
@@ -370,7 +372,6 @@ struct DlssNr_Dx12::State
 
     DXGI_COLOR_SPACE_TYPE FinishedColorSpace(IDXGISwapChain* swapchain, DXGI_FORMAT format);
 
-    void ApplyToFinishedPicture(IDXGISwapChain* swapchain, ID3D12CommandQueue* queue);
 
     void ApplyToFinishedPictureDx11(IDXGISwapChain* swapchain);
 
@@ -392,9 +393,12 @@ struct DlssNr_Dx12::State
         bool targetSupportsUav;
         float whitePoint = 1.0f;
         ID3D12Resource* modelInput = nullptr;
+        ID3D12Resource* exposure = nullptr;
+        DlssNrConstants exposureConstants {};
     };
     void EncodeInput(EncodeContext& context);
     DlssNrConstants MakeResolveConstants(const EncodeContext& context, unsigned int effectivePasses);
+    OptiScaler::RollingVitals vitals;
     void EndGpuTiming(ID3D12GraphicsCommandList* cmdList);
 
     void Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource* colour, ID3D12Resource* depth, ID3D12Resource* motion,

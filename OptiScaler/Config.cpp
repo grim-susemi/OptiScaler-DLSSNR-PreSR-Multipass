@@ -363,6 +363,16 @@ bool Config::Reload(std::filesystem::path iniPath)
                 DlssNrScalingDownscaler.reset();
             DlssNrPasses.set_from_config(readUInt("DlssNr", "Passes"));
             DlssNrWhitePointScale.set_from_config(readFloat("DlssNr", "WhitePointScale"));
+            DlssNrReplaceDetailStrength.set_from_config(readFloat("DlssNr", "ReplaceDetailStrength"));
+            DlssNrResidualConfidenceSensitivity.set_from_config(readFloat("DlssNr", "ResidualConfidenceSensitivity"));
+            DlssNrWhitePointSource.set_from_config(readUInt("DlssNr", "WhitePointSource"));
+            DlssNrWhitePointTrim.set_from_config(readFloat("DlssNr", "WhitePointTrim"));
+            DlssNrAutoExposureTrim.set_from_config(readFloat("DlssNr", "AutoExposureTrim"));
+            DlssNrAutoExposureHighlightProtection.set_from_config(
+                readFloat("DlssNr", "AutoExposureHighlightProtection"));
+            DlssNrExposureTrimAnchors.set_from_config(readString("DlssNr", "ExposureTrimAnchors"));
+            DlssNrAutoExposureTrimAnchors.set_from_config(readString("DlssNr", "AutoExposureTrimAnchors"));
+
             DlssNrPreset.set_from_config(readUInt("DlssNr", "Preset"));
             DlssNrIntensity.set_from_config(readFloat("DlssNr", "Intensity"));
             DlssNrStyle.set_from_config(readUInt("DlssNr", "Style"));
@@ -534,6 +544,8 @@ bool Config::Reload(std::filesystem::path iniPath)
 
             // Don't enable again if set false because of Linux issue
             OverlayMenu.set_from_config(readBool("Menu", "OverlayMenu"));
+            ShortcutKeyRequireCtrl.set_from_config(readBool("Menu", "ShortcutKeyRequireCtrl"));
+            ShortcutKeyRequireAlt.set_from_config(readBool("Menu", "ShortcutKeyRequireAlt"));
             ShortcutKey.set_from_config(readInt("Menu", "ShortcutKey"));
             ExtendedLimits.set_from_config(readBool("Menu", "ExtendedLimits"));
             ShowFps.set_from_config(readBool("Menu", "ShowFps"));
@@ -936,7 +948,7 @@ std::string GetFloatValue(std::optional<float> value)
     return std::to_string(value.value());
 }
 
-bool Config::SaveIni()
+bool Config::SaveIni(std::filesystem::path destination)
 {
     // Upscalers
     {
@@ -1257,9 +1269,9 @@ bool Config::SaveIni()
     ini.Delete("DlssNr", "ProxyProbe");
     ini.Delete("DlssNr", "ProbeD3D11");
     ini.Delete("DlssNr", "Precision"); // Remove the obsolete backend selector from saved configurations.
-    for (const char* key : { "ScanExposure", "ScanMeter", "ScanTrim", "ScanAnchorValue",
-                             "ScanAnchorWhitePoint", "ScanAnchors", "ScanInverted",
-                             "WhitePointSource", "WhitePointFromExposure", "WhitePointTrim", "SkinToneEnabled", "AutoCapture" })
+    for (const char* key :
+         { "ScanExposure", "ScanMeter", "ScanTrim", "ScanAnchorValue", "ScanAnchorWhitePoint", "ScanAnchors",
+           "ScanInverted", "WhitePointFromExposure", "SkinToneEnabled", "AutoCapture" })
         ini.Delete("DlssNr", key);
     {
         auto toggle = Instance()->DlssNrToggleKey.value_for_config();
@@ -1288,6 +1300,22 @@ bool Config::SaveIni()
     ini.SetValue("DlssNr", "ScalingDownscaler", GetIntValue(Instance()->DlssNrScalingDownscaler).c_str());
 
     ini.SetValue("DlssNr", "Passes", GetIntValue(Instance()->DlssNrPasses.value_for_config()).c_str());
+    ini.SetValue("DlssNr", "ReplaceDetailStrength",
+                 GetFloatValue(Instance()->DlssNrReplaceDetailStrength.value_for_config()).c_str());
+    ini.SetValue("DlssNr", "ResidualConfidenceSensitivity",
+                 GetFloatValue(Instance()->DlssNrResidualConfidenceSensitivity.value_for_config()).c_str());
+    ini.SetValue("DlssNr", "WhitePointSource",
+                 GetIntValue(Instance()->DlssNrWhitePointSource.value_for_config()).c_str());
+    ini.SetValue("DlssNr", "WhitePointTrim",
+                 GetFloatValue(Instance()->DlssNrWhitePointTrim.value_for_config()).c_str());
+    ini.SetValue("DlssNr", "AutoExposureTrim",
+                 GetFloatValue(Instance()->DlssNrAutoExposureTrim.value_for_config()).c_str());
+    ini.SetValue("DlssNr", "AutoExposureHighlightProtection",
+                 GetFloatValue(Instance()->DlssNrAutoExposureHighlightProtection.value_for_config()).c_str());
+    ini.SetValue("DlssNr", "ExposureTrimAnchors",
+                 Instance()->DlssNrExposureTrimAnchors.value_for_config().value_or("auto").c_str());
+    ini.SetValue("DlssNr", "AutoExposureTrimAnchors",
+                 Instance()->DlssNrAutoExposureTrimAnchors.value_for_config().value_or("auto").c_str());
     ini.SetValue("DlssNr", "WhitePointScale",
                  GetFloatValue(Instance()->DlssNrWhitePointScale.value_for_config()).c_str());
     ini.SetValue("DlssNr", "Preset", GetIntValue(Instance()->DlssNrPreset.value_for_config()).c_str());
@@ -1761,17 +1789,23 @@ bool Config::SaveIni()
                      wstring_to_string(Instance()->XeSSDx11Library.value_for_config_or(L"auto")).c_str());
     }
 
+    ini.SetValue("Menu", "ShortcutKeyRequireCtrl",
+                 GetBoolValue(Instance()->ShortcutKeyRequireCtrl.value_for_config()).c_str());
+
+    ini.SetValue("Menu", "ShortcutKeyRequireAlt",
+                 GetBoolValue(Instance()->ShortcutKeyRequireAlt.value_for_config()).c_str());
+
     // Old configs, just delete them
     {
         ini.Delete("FSR", "Fsr4ForceEnableInt8");
         ini.Delete("Nukems", "MakeDepthCopy", true);
     }
 
-    auto pathWStr = absoluteFileName.wstring();
+    const auto pathWStr = (destination.empty() ? absoluteFileName : destination).wstring();
 
     LOG_INFO("Trying to save ini to: {0}", wstring_to_string(pathWStr));
 
-    return ini.SaveFile(absoluteFileName.wstring().c_str()) >= 0;
+    return ini.SaveFile(pathWStr.c_str()) >= 0;
 }
 
 bool Config::SaveXeFG()
@@ -2010,4 +2044,46 @@ Config* Config::Instance()
         _config = new Config();
 
     return _config;
+}
+
+namespace
+{
+std::filesystem::path ProfilePath(const std::wstring& name)
+{
+    if (name.empty() || name.size() > 100 || name.back() == L'.' || name.back() == L' ' ||
+        name.find_first_of(L"<>:\"/\\|?*") != std::wstring::npos ||
+        std::any_of(name.begin(), name.end(), [](wchar_t c) { return c < 32; }))
+        return {};
+    return Util::DllPath().parent_path() / "OptiScalerProfiles" / (name + L".profile");
+}
+} // namespace
+bool Config::SaveProfile(const std::wstring& name)
+{
+    const auto path = ProfilePath(name);
+    if (path.empty())
+        return false;
+    std::error_code error;
+    std::filesystem::create_directories(path.parent_path(), error);
+    return !error && SaveIni(path);
+}
+bool Config::LoadProfile(const std::wstring& name)
+{
+    const auto path = ProfilePath(name);
+    if (path.empty())
+        return false;
+    const bool detected = State::Instance().nvngxIniDetected;
+    const bool loaded = Reload(path);
+    State::Instance().nvngxIniDetected = detected;
+    return loaded;
+}
+std::vector<std::string> Config::ListProfiles()
+{
+    std::vector<std::string> names;
+    std::error_code error;
+    const auto folder = Util::DllPath().parent_path() / "OptiScalerProfiles";
+    for (std::filesystem::directory_iterator it(folder, error), end; !error && it != end; it.increment(error))
+        if (it->is_regular_file(error) && it->path().extension() == L".profile")
+            names.push_back(wstring_to_string(it->path().stem().wstring()));
+    std::sort(names.begin(), names.end());
+    return names;
 }

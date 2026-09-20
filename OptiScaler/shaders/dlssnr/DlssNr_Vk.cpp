@@ -213,8 +213,8 @@ bool DlssNr_Vk::Dispatch(VkCommandBuffer InCmdList, const DlssNrConstants& InCon
                             nullptr);
 
     // The shader's thread group is 8x8, the same as the D3D12 path.
-    const uint32_t groupsX = (InThreadsX + 7) / 8;
-    const uint32_t groupsY = (InThreadsY + 7) / 8;
+    const uint32_t groupsX = InConstants.Mode == DlssNrMode_Meter ? InThreadsX : (InThreadsX + 7) / 8;
+    const uint32_t groupsY = InConstants.Mode == DlssNrMode_Meter ? InThreadsY : (InThreadsY + 7) / 8;
 
     vkCmdDispatch(InCmdList, groupsX, groupsY, 1);
 

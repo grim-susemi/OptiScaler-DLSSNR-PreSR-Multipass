@@ -43,6 +43,7 @@ cbuffer Params : register(b0)
     uint gResidualHistoryValid;
     uint gResidualMotionBaseX;
     uint gResidualMotionBaseY;
+    float gReplaceDetailUnused, gModelWorkScaleUnused, gResidualConfidenceSensitivity;
 };
 
 // Same registers and the same SPIR-V binding numbers as dlssnr.hlsl, including the slots these
@@ -114,6 +115,8 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         // Invalid reprojection: history is 0, so the pixel fades in from no edit at the normal blend
         // rate over the next frames. A cold start/cut also fades in, without sampling uninitialized history.
         float a = clamp(gResidualBlend, 0.0, 1.0);
+        if (gResidualConfidenceSensitivity > 0.0)
+            a = lerp(a, 1.0, saturate(length(delta - history) / gResidualConfidenceSensitivity));
 
         gTarget[id.xy] = float4(lerp(history, delta, a), 1.0);
         return;

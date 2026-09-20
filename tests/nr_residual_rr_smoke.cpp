@@ -131,6 +131,10 @@ try
     // The restored host path composes at INPUT resolution, then lets the existing private
     // upscaler enlarge its encoded difference. No extra strength or spatial enlargement here.
     const auto accumulated = result;
+    c.ResidualConfidenceSensitivity = 0.1f;
+    const auto responsive = run(c, base, model, history, motion);
+    expect(closeFloat(responsive[0].r, 2) && closeFloat(responsive[0].g, -2), "Confidence gate retained stale history");
+    c.ResidualConfidenceSensitivity = 0;
     DlssNrConstants compose {};
     compose.Mode = DlssNrResidualMode_Apply;
     compose.Width = 2; compose.Height = 1; compose.TransferStrength = 1;

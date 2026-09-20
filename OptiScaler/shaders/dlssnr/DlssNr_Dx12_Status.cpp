@@ -64,9 +64,14 @@ void DlssNr_Dx12::State::EndGpuTiming(ID3D12GraphicsCommandList* cmdList)
     if (auto ngx = ngxTime->ReadGpuTime())
         lastNgxTime = ngx;
 
+    if (lastGpuTime && lastNgxTime)
+        vitals.Push(*lastGpuTime, *lastNgxTime);
     if (lastGpuTime && lastNgxTime && frames - lastSplitLog > 600)
     {
         lastSplitLog = frames;
+        const auto window = vitals.Read();
+        LOG_INFO("DLSS-NR GPU window: {} samples, total mean {:.2f} / p99 {:.2f} ms, model mean {:.2f} / p99 {:.2f} ms",
+                 window.samples, window.totalMean, window.totalP99, window.modelMean, window.modelP99);
         const double total = *lastGpuTime, ngx = *lastNgxTime;
         LOG_INFO("DLSS-NR elapsed: {:.2f} ms total, {:.2f} ms model, {:.2f} ms surrounding work ({:.0f}%; "
                  "intervals may include other GPU work)",

@@ -2638,7 +2638,7 @@ static void HookNrQueue(ID3D12Device* InDevice)
     if (hr == S_OK)
     {
         ID3D12CommandQueue* realQueue = nullptr;
-        if (!CheckForRealObject(__FUNCTION__, queue, (IUnknown**) &realQueue))
+        if (!Util::CheckForRealObject(__FUNCTION__, queue, (IUnknown**) &realQueue))
             realQueue = queue;
 
         // Get the vtable pointer

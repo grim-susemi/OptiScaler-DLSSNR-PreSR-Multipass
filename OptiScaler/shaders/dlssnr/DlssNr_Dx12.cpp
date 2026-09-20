@@ -1,4 +1,5 @@
 #include "pch.h"
+#include <dlssnr/DlssNr_StreamlinePicture.h>
 #include "DlssNr_Dx12_State.h"
 #include <atomic>
 #include <list>
@@ -201,8 +202,12 @@ bool DlssNr_Dx12::DispatchCompute(ID3D12GraphicsCommandList* InCmdList, const Dl
 
     // Sized from the constants rather than from a resource, because the pass that shrinks the proxy
     // writes fewer pixels than its source has.
-    const UINT dispatchWidth = (InConstants.Width + _numThreadsX - 1) / _numThreadsX;
-    const UINT dispatchHeight = (InConstants.Height + _numThreadsY - 1) / _numThreadsY;
+    const UINT dispatchWidth = InConstants.Mode == DlssNrMode_Meter
+                                   ? InConstants.Width
+                                   : (InConstants.Width + _numThreadsX - 1) / _numThreadsX;
+    const UINT dispatchHeight = InConstants.Mode == DlssNrMode_Meter
+                                    ? InConstants.Height
+                                    : (InConstants.Height + _numThreadsY - 1) / _numThreadsY;
     InCmdList->Dispatch(dispatchWidth, dispatchHeight, 1);
 
     return true;
@@ -545,9 +550,15 @@ void DlssNr_Dx12::SubmitFinishedCommands(ID3D12CommandQueue* queue, UINT count, 
     _state->FinishedPictureSubmitted(queue, count, lists);
 }
 bool DlssNr_Dx12::WaitFinished() { return _state->WaitForFinishedPicture(); }
-void DlssNr_Dx12::ApplyFinished(IDXGISwapChain* swapchain, ID3D12CommandQueue* queue)
+void DlssNr_Dx12::ApplyFinished(ID3D12Resource* picture, ID3D12CommandQueue* queue, DXGI_COLOR_SPACE_TYPE space,
+                                bool gameFrameHandoff)
 {
-    _state->ApplyToFinishedPicture(swapchain, queue);
+    std::lock_guard lock(_state->mutex);
+    if (!Config::Instance()->DlssNrFinishedPicture.value_or_default() ||
+        !Config::Instance()->DlssNrEnabled.value_or_default())
+        _state->late.Cancel();
+    else if (picture && queue)
+        _state->ApplyFinishedColor(picture, queue, space, gameFrameHandoff);
     _state->Publish();
 }
 void DlssNr_Dx12::ApplyFinishedDx11(IDXGISwapChain* swapchain)
@@ -585,17 +596,41 @@ bool WaitForFinishedPicture()
         ready = owner->WaitFinished() && ready;
     return ready;
 }
+static DXGI_COLOR_SPACE_TYPE ReadFinishedSpace(IDXGISwapChain* swapchain, ID3D12Resource* picture)
+{
+    auto space = picture->GetDesc().Format == DXGI_FORMAT_R16G16B16A16_FLOAT ? DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709
+                                                                             : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
+    UINT size = sizeof(space);
+    swapchain->GetPrivateData(FinishedColorSpaceKey, &size, &space);
+    return space;
+}
 void ApplyToFinishedPicture(IDXGISwapChain* swapchain, ID3D12CommandQueue* queue)
 {
+    Microsoft::WRL::ComPtr<IDXGISwapChain3> chain;
+    Microsoft::WRL::ComPtr<ID3D12Resource> picture;
+    auto space = DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
+    const auto& config = *Config::Instance();
+    // Swapchain calls must precede NR locks: FG Present can submit commands while holding its own lock.
+    if (swapchain && queue && config.DlssNrEnabled.value_or_default() &&
+        config.DlssNrFinishedPicture.value_or_default())
+    {
+        if (StreamlinePicture::RenderQueue(swapchain) || FAILED(swapchain->QueryInterface(IID_PPV_ARGS(&chain))) ||
+            FAILED(chain->GetBuffer(chain->GetCurrentBackBufferIndex(), IID_PPV_ARGS(&picture))))
+            return;
+        space = ReadFinishedSpace(swapchain, picture.Get());
+    }
     std::lock_guard lock(nrOwnersMutex);
     if (activeNrOwner)
-        activeNrOwner->ApplyFinished(swapchain, queue);
+        activeNrOwner->ApplyFinished(picture.Get(), queue, space);
 }
 void ApplyToStreamlinePicture(IDXGISwapChain* swapchain, ID3D12Resource* picture, ID3D12CommandQueue* queue)
 {
+    if (!swapchain || !picture || !queue)
+        return;
+    const auto space = ReadFinishedSpace(swapchain, picture);
     std::lock_guard lock(nrOwnersMutex);
     if (activeNrOwner)
-        activeNrOwner->ApplyStreamlineFinished(swapchain, picture, queue);
+        activeNrOwner->ApplyFinished(picture, queue, space, true);
 }
 void ApplyToFinishedPictureDx11(IDXGISwapChain* swapchain)
 {

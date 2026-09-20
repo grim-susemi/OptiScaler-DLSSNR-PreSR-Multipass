@@ -25,6 +25,7 @@ void DlssNr_Dx12::State::EncodeInput(EncodeContext& context)
     whitePoint = frame.WhitePointOverride > 0.0f ? frame.WhitePointOverride
                                                : cfg.DlssNrWhitePointScale.value_or_default();
 
+    const bool wasHeld = nr.heldActive;
     // Frame hold. Freeze the encode's input so a live setting change re-renders the same frame. This
     // is self-contained on purpose: it copies the output aside on hold-on and copies it BACK over the
     // live output before the encode reads it while held, so the encode's own path and barriers below
@@ -93,7 +94,75 @@ void DlssNr_Dx12::State::EncodeInput(EncodeContext& context)
         }
     }
 
-    DlssNrConstants encodeParams {};
+    const auto source = cfg.DlssNrWhitePointSource.value_or_default();
+    auto* gameExposure = static_cast<ID3D12Resource*>(frame.ExposureTexture);
+    const bool gameValid = gameExposure && gameExposure->GetDesc().Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D &&
+                           gameExposure->GetDesc().Width == 1 && gameExposure->GetDesc().Height == 1 &&
+                           gameExposure->GetDesc().DepthOrArraySize == 1 &&
+                           gameExposure->GetDesc().SampleDesc.Count == 1;
+    const bool exposureHeld = wasHeld && nr.heldActive && nr.exposureReadable && nr.exposureSource == source;
+    if (exposureHeld)
+    {
+        context.exposure = nr.exposure;
+        DlssNr::ExposureConstants(context.exposureConstants, cfg, source, nr.exposurePreExposure);
+    }
+    if (!exposureHeld && isHdrBuffer && frame.WhitePointOverride <= 0 && (source == 3 || (source == 1 && gameValid)))
+    {
+        if (!nr.exposure)
+            nr.exposure = CreateScratch(device, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 1);
+        if (source == 3 && !nr.exposureMeter)
+            nr.exposureMeter = CreateScratch(device, DXGI_FORMAT_R32G32B32A32_FLOAT, 64, 64);
+        if (nr.exposure && (source != 3 || nr.exposureMeter))
+        {
+            auto& meter = context.exposureConstants;
+            DlssNr::ExposureConstants(meter, cfg, source, frame.PreExposure);
+            meter.ExposureSourceWidth = width;
+            meter.ExposureSourceHeight = height;
+            if (nr.exposureReadable)
+                Barrier(cmdList, nr.exposure, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            bool ready = false;
+            if (source == 3)
+            {
+                const auto previous = targetState;
+                TransitionTarget(D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                meter.Mode = DlssNrMode_Meter;
+                meter.Width = meter.Height = 64;
+                ready = shader.DispatchPass(cmdList, meter, target, nullptr, nullptr, nullptr, nullptr,
+                                            nr.exposureMeter, nullptr);
+                TransitionTarget(previous);
+                Barrier(cmdList, nr.exposureMeter, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                meter.Mode = DlssNrMode_AutoExposure;
+                meter.Width = meter.Height = 1;
+                ready = ready && shader.DispatchPass(cmdList, meter, nr.exposureMeter, nullptr, nullptr, nullptr,
+                                                     nullptr, nr.exposure, nullptr);
+                Barrier(cmdList, nr.exposureMeter, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            }
+            else
+            {
+                const auto prior = static_cast<D3D12_RESOURCE_STATES>(frame.ExposureState);
+                Barrier(cmdList, gameExposure, prior, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                meter.Mode = DlssNrMode_Downsample;
+                meter.Width = meter.Height = 1;
+                ready = shader.DispatchPass(cmdList, meter, gameExposure, nullptr, nullptr, nullptr, nullptr,
+                                            nr.exposure, nullptr);
+                Barrier(cmdList, gameExposure, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, prior);
+            }
+            Barrier(cmdList, nr.exposure, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            nr.exposureReadable = true;
+            if (ready)
+            {
+                context.exposure = nr.exposure;
+                nr.exposureSource = source;
+                nr.exposurePreExposure = meter.PreExposure;
+            }
+        }
+    }
+
+    DlssNrConstants encodeParams = context.exposure ? context.exposureConstants : DlssNrConstants {};
     encodeParams.Mode = DlssNrMode_Encode;
     // A frame that is already display-referred is handed over untouched: the encode becomes a copy and
     // the resolve adds the model's edit back at full scale.
@@ -104,7 +173,7 @@ void DlssNr_Dx12::State::EncodeInput(EncodeContext& context)
     encodeParams.Height = height;
 
     TransitionTarget(D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    shader.DispatchPass(cmdList, encodeParams, target, nullptr, nullptr, nullptr, nullptr, nr.colorCopy,
+    shader.DispatchPass(cmdList, encodeParams, target, nullptr, nullptr, context.exposure, nullptr, nr.colorCopy,
                         nr.hdrCopy);
 
     if (targetSupportsUav)
@@ -188,7 +257,7 @@ DlssNrConstants DlssNr_Dx12::State::MakeResolveConstants(const EncodeContext& co
     const auto whitePoint = context.whitePoint;
     const auto width = nr.width, height = nr.height;
     const bool isHdrBuffer = context.frame.ColourIsLinearHdr;
-    DlssNrConstants resolveParams {};
+    DlssNrConstants resolveParams = context.exposure ? context.exposureConstants : DlssNrConstants {};
     resolveParams.Mode = DlssNrMode_Resolve;
     resolveParams.WhitePoint = whitePoint;
     resolveParams.Width = width;
@@ -213,6 +282,9 @@ DlssNrConstants DlssNr_Dx12::State::MakeResolveConstants(const EncodeContext& co
     resolveParams.CompareSplit = cfg.DlssNrCompareSplit.value_or_default();
     resolveParams.CompareZoom = std::max(1.0f, cfg.DlssNrCompareZoom.value_or_default());
     resolveParams.CompareSwap = cfg.DlssNrCompareSwap.value_or_default() ? 1u : 0u;
+
+    resolveParams.ReplaceDetailStrength = cfg.DlssNrReplaceDetailStrength.value_or_default();
+    resolveParams.ModelWorkScale = context.workScale;
 
     // Report the effective composition settings when they change.
 

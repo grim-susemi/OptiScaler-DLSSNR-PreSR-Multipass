@@ -227,6 +227,51 @@ try
                 }
     }
     std::cout << "PASS: production Vulkan 30-pass clamp chain, finite RGB, bounded range, identity and alpha\n";
+    // Execute the automatic exposure path with the production SPIR-V and its actual binding layout.
+    constants = {};
+    constants.Mode = DlssNrMode_Meter;
+    constants.Width = constants.Height = 64;
+    std::memcpy(uniforms[0].mapped, &constants, sizeof(constants));
+    constants.Mode = DlssNrMode_AutoExposure;
+    constants.Width = constants.Height = 1;
+    constants.PreExposure = 8;
+    constants.ExposureSourceWidth = allocationWidth;
+    constants.ExposureSourceHeight = allocationHeight;
+    std::memcpy(uniforms[1].mapped, &constants, sizeof(constants));
+    for (unsigned pass = 0; pass < 2; ++pass)
+    {
+        VkDescriptorImageInfo source { sampler, images[pass ? 1 : 0].info.ImageView, VK_IMAGE_LAYOUT_GENERAL };
+        VkDescriptorImageInfo target { sampler, images[pass ? 4 : 1].info.ImageView, VK_IMAGE_LAYOUT_GENERAL };
+        VkWriteDescriptorSet writes[2] {};
+        for (unsigned n = 0; n < 2; ++n)
+        {
+            writes[n].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[n].dstSet = sets[pass];
+            writes[n].dstBinding = n ? 5 : 1;
+            writes[n].descriptorCount = 1;
+            writes[n].descriptorType = n ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[n].pImageInfo = n ? &target : &source;
+        }
+        vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+    }
+    check(vkResetCommandPool(device, commandPool, 0));
+    check(vkBeginCommandBuffer(cmd, &begin));
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+    for (unsigned pass = 0; pass < 2; ++pass)
+    {
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &sets[pass], 0, nullptr);
+        vkCmdDispatch(cmd, pass ? 1 : 64, pass ? 1 : 64, 1);
+        memoryBarrier(VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+    }
+    vkCmdCopyImageToBuffer(cmd, images[4].info.Image, VK_IMAGE_LAYOUT_GENERAL, readback.buffer, 1, &copy);
+    memoryBarrier(VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+    check(vkEndCommandBuffer(cmd));
+    check(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE));
+    check(vkQueueWaitIdle(queue));
+    const float white = (0.25f * 0.2126f + 0.5f * 0.7152f + 0.75f * 0.0722f) * 0.82f / 0.18f;
+    if (!std::isfinite(pixels[0]) || std::abs(pixels[0] - white) > 0.001f)
+        throw std::runtime_error("Vulkan automatic exposure mismatch");
+    std::cout << "PASS: production Vulkan automatic exposure and pre-exposure normalization\n";
     vkDestroyCommandPool(device, commandPool, nullptr); vkDestroyDescriptorPool(device, pool, nullptr);
     vkDestroySampler(device, sampler, nullptr); vkDestroyPipeline(device, pipeline, nullptr);
     vkDestroyShaderModule(device, shader, nullptr); vkDestroyPipelineLayout(device, pipelineLayout, nullptr);

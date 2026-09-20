@@ -38,6 +38,7 @@ class FinishedVk;
 // Keep that metadata alongside the shared frame properties when rebuilding explicit resources.
 struct DlssNrFrameInfo_Vk : DlssNrFrameInfo
 {
+    VkImageInfo Exposure {};
     bool DepthReadWrite = false;
     bool MotionReadWrite = false;
     unsigned int ColorSubrectBaseX = 0;

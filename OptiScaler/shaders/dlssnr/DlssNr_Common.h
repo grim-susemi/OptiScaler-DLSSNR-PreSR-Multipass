@@ -26,6 +26,8 @@ enum DlssNrMode : uint32_t
     DlssNrMode_UnitExposure = 7,   // constant exposure for the private DLSS feature
     DlssNrMode_ClampProxy = 8,     // restore the encoded RGB range between model passes
     DlssNrMode_EncodeProxyResidual = 9,
+    DlssNrMode_Meter = 3,
+    DlssNrMode_AutoExposure = 11,
     DlssNrMode_ResizePrivateGuides = 10
 };
 
@@ -92,6 +94,8 @@ struct DlssNrFrameInfo
     // The scale the game multiplied its buffer by for float precision, which DLSS is told so it can
     // undo it. Usually 1. Divided out before the exposure is applied, exactly as FSR's PrepareRgb does.
     float PreExposure = 1.0f;
+    void* ExposureTexture = nullptr; // Borrowed for this synchronous evaluation only.
+    uint32_t ExposureState = 0;
 
     // How much of the depth and motion vector textures the game actually rendered into.
     // Before SR this also selects the origin-zero active colour rectangle, not its allocation.
@@ -215,8 +219,22 @@ struct alignas(256) DlssNrConstants
     uint32_t ResidualHistoryValid;
     uint32_t ResidualMotionBaseX;
     uint32_t ResidualMotionBaseY;
+    float ReplaceDetailStrength;
+    float ModelWorkScale;
+    float ResidualConfidenceSensitivity;
+    uint32_t ExposureMode;
+    float PreExposure;
+    float ExposureTrim;
+    float ExposureProtection;
+    uint32_t ExposureAnchorCount;
+    uint32_t ExposureSourceWidth;
+    uint32_t ExposureSourceHeight;
+    uint32_t ExposurePadding;
+    float ExposureAnchors[16]; // Eight float2 pairs, packed as four float4s in HLSL.
 };
 static_assert(sizeof(DlssNrConstants) == 256);
+static_assert(offsetof(DlssNrConstants, ReplaceDetailStrength) == 132);
+static_assert(offsetof(DlssNrConstants, ExposureAnchors) == 176);
 
 // Local mode numbering for dlssnr_residual.hlsl (a separate blob / PSO from the DlssNrMode shader).
 enum DlssNrResidualMode : uint32_t

@@ -35,6 +35,13 @@ cbuffer Params : register(b0)
     float gSkinColour;
     float gEnvironmentDetail;
     float gEnvironmentColour;
+    float gResidualBlendUnused;
+    uint gResidualHistoryValidUnused, gResidualMotionBaseXUnused, gResidualMotionBaseYUnused;
+    float gReplaceDetailStrength, gModelWorkScale, gResidualConfidenceUnused;
+    uint gExposureMode;
+    float gPreExposure, gExposureTrim, gExposureProtection;
+    uint gExposureAnchorCount, gExposureSourceWidth, gExposureSourceHeight, gExposurePadding;
+    float4 gExposureAnchors[4];
 };
 
 // Hue-preserving gamut compression toward the D65 neutral axis.
@@ -220,9 +227,39 @@ RWTexture2D<float4> gKeep     : register(u1);  // encode: the untouched copy. un
 #endif
 SamplerState        gLinear   : register(s0);  // so the edit can be read at a different size
 
+float2 ExposureAnchor(uint i)
+{
+    return (i & 1u) ? gExposureAnchors[min(i / 2u, 3u)].zw : gExposureAnchors[min(i / 2u, 3u)].xy;
+}
 float WhitePoint()
 {
-    return max(gWhitePoint, 1e-4);
+    float base = max(gWhitePoint, 1e-4);
+    if (gExposureMode == 1 || gExposureMode == 3)
+    {
+        float measured = gMotion.Load(int3(0, 0, 0)).r;
+        if (isfinite(measured) && measured > 1e-8)
+        {
+        base = gExposureMode == 1 ? gPreExposure / measured : measured;
+        float trim = gExposureTrim;
+        uint count = min(gExposureAnchorCount, 8u);
+        if (count > 0)
+        {
+            trim = ExposureAnchor(0).y;
+            [unroll] for (uint i = 1; i < 8; ++i)
+            {
+                float2 previous = ExposureAnchor(i - 1);
+                float2 next = ExposureAnchor(i);
+                if (i < count && base > previous.x)
+                {
+                    float t = saturate(log2(max(base, 1e-8) / previous.x) / log2(next.x / previous.x));
+                    trim = exp2(lerp(log2(previous.y), log2(next.y), t));
+                }
+            }
+        }
+        base *= trim;
+        }
+    }
+    return max(SanitizeFinite(base, gWhitePoint), 1e-4);
 }
 
 static const float3 kLuma = float3(0.2126, 0.7152, 0.0722);
@@ -403,9 +440,156 @@ float3 CubeScaleResidual(float3 P, float3 T)
     return P + saturate(alpha) * d;
 }
 
+groupshared float4 gExposureReduce[64];
+
 [numthreads(8, 8, 1)]
-void CSMain(uint3 id : SV_DispatchThreadID)
+void CSMain(uint3 id : SV_DispatchThreadID, uint3 groupId : SV_GroupID, uint3 groupThreadId : SV_GroupThreadID)
 {
+    const uint lane = groupThreadId.y * 8u + groupThreadId.x;
+
+    if (gMode == 3)
+    {
+        if (groupId.x >= gWidth || groupId.y >= gHeight)
+            return;
+
+        uint fullW, fullH;
+        gSource.GetDimensions(fullW, fullH);
+
+        const uint tx0 = (groupId.x * fullW) / gWidth;
+        const uint tx1 = ((groupId.x + 1u) * fullW) / gWidth;
+        const uint ty0 = (groupId.y * fullH) / gHeight;
+        const uint ty1 = ((groupId.y + 1u) * fullH) / gHeight;
+        const uint endX = max(tx1, tx0 + 1u);
+        const uint endY = max(ty1, ty0 + 1u);
+
+        float localSum = 0.0;
+        [loop] for (uint ty = ty0 + groupThreadId.y; ty < endY; ty += 8u)
+        {
+            [loop] for (uint tx = tx0 + groupThreadId.x; tx < endX; tx += 8u)
+            {
+                const float3 c = max(gSource.Load(int3(min(tx, fullW - 1u), min(ty, fullH - 1u), 0)).rgb, 0.0);
+                const float luma = dot(c, kLuma);
+                localSum += isfinite(luma) ? max(luma, 0.0) : 0.0;
+            }
+        }
+
+        gExposureReduce[lane] = float4(localSum, 0.0, 0.0, 0.0);
+        GroupMemoryBarrierWithGroupSync();
+        [unroll] for (uint stride = 32u; stride > 0u; stride >>= 1u)
+        {
+            if (lane < stride)
+                gExposureReduce[lane].x += gExposureReduce[lane + stride].x;
+            GroupMemoryBarrierWithGroupSync();
+        }
+
+        if (lane == 0u)
+        {
+            const uint taken = (endX - tx0) * (endY - ty0);
+            gTarget[groupId.xy] = float4(taken > 0u ? gExposureReduce[0].x / (float) taken : 0.0,
+                                         0.0, 0.0, 1.0);
+        }
+        return;
+    }
+
+    if (gMode == 11)
+    {
+        const uint srcW = max(gExposureSourceWidth, 1u);
+        const uint srcH = max(gExposureSourceHeight, 1u);
+        const float preExposure =
+            (isfinite(gPreExposure) && gPreExposure > 1e-6) ? gPreExposure : 1.0;
+        const float protection = saturate(gExposureProtection * 0.01);
+
+        float weightedBufferLuma = 0.0;
+        float weightedSceneLogLuma = 0.0;
+        float totalPixels = 0.0;
+
+        [loop] for (uint index = lane; index < 4096u; index += 64u)
+        {
+            const uint tx = index & 63u;
+            const uint ty = index >> 6u;
+            const uint x0 = (tx * srcW) / 64u;
+            const uint x1 = ((tx + 1u) * srcW) / 64u;
+            const uint y0 = (ty * srcH) / 64u;
+            const uint y1 = ((ty + 1u) * srcH) / 64u;
+            const uint tileW = max(x1 - x0, 1u);
+            const uint tileH = max(y1 - y0, 1u);
+            const float pixels = (float) tileW * (float) tileH;
+            const float tileMean = max(SanitizeFinite(gSource.Load(int3(tx, ty, 0)).r, 0.0), 0.0);
+
+            weightedBufferLuma += tileMean * pixels;
+            totalPixels += pixels;
+            if (protection > 0.0)
+            {
+                const float sceneLuma = max(tileMean / preExposure, 1e-8);
+                weightedSceneLogLuma += clamp(log2(sceneLuma), -24.0, 24.0) * pixels;
+            }
+        }
+
+        gExposureReduce[lane] = float4(weightedBufferLuma, weightedSceneLogLuma, totalPixels, 0.0);
+        GroupMemoryBarrierWithGroupSync();
+        [unroll] for (uint stride = 32u; stride > 0u; stride >>= 1u)
+        {
+            if (lane < stride)
+                gExposureReduce[lane].xyz += gExposureReduce[lane + stride].xyz;
+            GroupMemoryBarrierWithGroupSync();
+        }
+
+        const float allPixels = gExposureReduce[0].z;
+        const float averageBufferLuma =
+            allPixels > 0.0 ? gExposureReduce[0].x / allPixels : 0.0;
+        float meteredSceneLuma = averageBufferLuma / preExposure;
+
+        if (protection > 0.0 && allPixels > 0.0)
+        {
+            const float referenceLogLuma = gExposureReduce[0].y / allPixels;
+            const float highlightKneeEv = lerp(3.0, 1.0, protection);
+            const float highlightCompressionSlope = lerp(1.0, 0.35, protection);
+            float protectedLinearSum = 0.0;
+
+            [loop] for (uint index2 = lane; index2 < 4096u; index2 += 64u)
+            {
+                const uint tx2 = index2 & 63u;
+                const uint ty2 = index2 >> 6u;
+                const uint x0 = (tx2 * srcW) / 64u;
+                const uint x1 = ((tx2 + 1u) * srcW) / 64u;
+                const uint y0 = (ty2 * srcH) / 64u;
+                const uint y1 = ((ty2 + 1u) * srcH) / 64u;
+                const uint tileW = max(x1 - x0, 1u);
+                const uint tileH = max(y1 - y0, 1u);
+                const float pixels = (float) tileW * (float) tileH;
+                const float tileMean = max(SanitizeFinite(gSource.Load(int3(tx2, ty2, 0)).r, 0.0), 0.0);
+                const float sceneLuma = max(tileMean / preExposure, 1e-8);
+                const float logLuma = clamp(log2(sceneLuma), -24.0, 24.0);
+                const float deltaEv = logLuma - referenceLogLuma;
+                float compressedLogLuma = logLuma;
+                if (deltaEv > highlightKneeEv)
+                    compressedLogLuma = referenceLogLuma + highlightKneeEv +
+                                        (deltaEv - highlightKneeEv) * highlightCompressionSlope;
+                protectedLinearSum += exp2(clamp(compressedLogLuma, -24.0, 24.0)) * pixels;
+            }
+
+            gExposureReduce[lane].w = protectedLinearSum;
+            GroupMemoryBarrierWithGroupSync();
+            [unroll] for (uint stride2 = 32u; stride2 > 0u; stride2 >>= 1u)
+            {
+                if (lane < stride2)
+                    gExposureReduce[lane].w += gExposureReduce[lane + stride2].w;
+                GroupMemoryBarrierWithGroupSync();
+            }
+
+            const float protectedAverage = gExposureReduce[0].w / allPixels;
+            if (isfinite(protectedAverage) && protectedAverage > 1e-8)
+                meteredSceneLuma = protectedAverage;
+        }
+
+        if (lane == 0u)
+        {
+            float white = preExposure * meteredSceneLuma * (0.82 / 0.18);
+            gTarget[uint2(0, 0)] = float4(isfinite(white) && white > 1e-8 ? white : 1.0, 0, 0, 1);
+        }
+        return;
+    }
+
     if (id.x >= gWidth || id.y >= gHeight)
         return;
 
@@ -763,6 +947,20 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         result = gPassthrough != 0 ? modelDirect : NeutwoDecode(modelDirect);
     else if (gReversibleMode == 4)
         result = gPassthrough != 0 ? modelDirect : HybridDecode(modelDirect);
+
+    // Restore native luminance detail with a bounded, positive ratio (including near-black edges).
+    if ((gReversibleMode == 2 || gReversibleMode == 4) && gModelWorkScale > 0.0 &&
+        gModelWorkScale < 0.999 && gReplaceDetailStrength > 0.0)
+    {
+        float2 tap = clamp(round(1.0 / gModelWorkScale), 1.0, 4.0) / float2(gWidth, gHeight);
+        float3 neighbours = gOriginal.SampleLevel(gLinear, cmpUv + float2(tap.x, 0), 0).rgb +
+                            gOriginal.SampleLevel(gLinear, cmpUv - float2(tap.x, 0), 0).rgb +
+                            gOriginal.SampleLevel(gLinear, cmpUv + float2(0, tap.y), 0).rgb +
+                            gOriginal.SampleLevel(gLinear, cmpUv - float2(0, tap.y), 0).rgb;
+        float blur = dot(original + neighbours / normScale, kLuma) / 5.0;
+        float contrast = (originalLuma - blur) / (max(originalLuma, blur) + kRatioFloor);
+        result *= exp2(clamp(gReplaceDetailStrength, 0.0, 2.0) * clamp(contrast, -1.0, 1.0));
+    }
 
     // Back out of the normalised space the composition worked in.
     result *= normScale;

@@ -782,6 +782,8 @@
     <ClInclude Include="proxies\Streamline_Proxy.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="dlssnr\DlssNr_Exposure.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="gpu_time\Vitals.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="framegen\dlssg\MfgUnlock.h">
       <Filter>framegen</Filter>
     </ClInclude>

@@ -340,6 +340,14 @@ class Config
 
     // Manual white-point divisor for the HDR-to-model encode.
     CustomOptional<float> DlssNrWhitePointScale { 1.0f };
+    CustomOptional<float> DlssNrReplaceDetailStrength { 0.0f };
+    CustomOptional<float> DlssNrResidualConfidenceSensitivity { 0.0f };
+    CustomOptional<uint32_t> DlssNrWhitePointSource { 0u };
+    CustomOptional<float> DlssNrWhitePointTrim { 1.0f };
+    CustomOptional<float> DlssNrAutoExposureTrim { 5.0f };
+    CustomOptional<float> DlssNrAutoExposureHighlightProtection { 0.0f };
+    CustomOptional<std::string> DlssNrExposureTrimAnchors { "" };
+    CustomOptional<std::string> DlssNrAutoExposureTrimAnchors { "" };
 
     // --- end DLSS 5 Neural Rendering -------------------------------------------------------------
 
@@ -419,6 +427,8 @@ class Config
     // Menu
     CustomOptional<float, NoDefault> MenuScale;
     CustomOptional<bool> OverlayMenu { true };
+    CustomOptional<bool> ShortcutKeyRequireCtrl { false };
+    CustomOptional<bool> ShortcutKeyRequireAlt { false };
     CustomOptional<int> ShortcutKey { VK_INSERT };
     CustomOptional<bool> ExtendedLimits { false };
     CustomOptional<bool> ShowFps { false };
@@ -752,7 +762,10 @@ class Config
     CustomOptional<bool, NoDefault> _DONTUSE_Fsr4ForceEnableInt8;
 
     bool LoadFromPath(const wchar_t* InPath);
-    bool SaveIni();
+    bool SaveIni(std::filesystem::path destination = {});
+    bool SaveProfile(const std::wstring& name);
+    bool LoadProfile(const std::wstring& name);
+    std::vector<std::string> ListProfiles();
     bool SaveXeFG();
 
     void CheckUpscalerFiles();

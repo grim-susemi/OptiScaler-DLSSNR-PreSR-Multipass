@@ -1,4 +1,4 @@
-> **v0.8.6 prerelease:** [shutdown fixes and validation](docs/RELEASE-v0.8.6.md).
+> **v0.8.7 prerelease:** [finished-picture queue safety fix and validation](docs/RELEASE-v0.8.7.md).
 
 <div align="center">
 

@@ -44,10 +44,9 @@ auto DlssNr_Dx12::State::ApplyFinishedColor(ID3D12Resource* color, ID3D12Command
             late.reset = true;
             continue;
         }
-        const auto completed = slot.fence->GetCompletedValue();
-        if (completed == UINT64_MAX ||
-            (gameFrameHandoff && !DlssNr::FinishedInputReady(slot.producerQueue.Get() == realQueue,
-                                                            completed, slot.ready)))
+        // A queued producer signal can depend on this presentation, regardless of FG provider.
+        if (!DlssNr::FinishedInputReady(slot.producerQueue.Get() == realQueue,
+                                        slot.fence->GetCompletedValue(), slot.ready))
             continue;
         if (slot.residualOnly == residualOnly && slot.frame.OutputWidth == desc.Width &&
             slot.frame.OutputHeight == desc.Height && (!latest || slot.serial > latest->serial))
@@ -66,15 +65,6 @@ auto DlssNr_Dx12::State::ApplyFinishedColor(ID3D12Resource* color, ID3D12Command
     }
     if (!latest)
         return false; // loading screen, another swapchain, or this real frame was already consumed
-    // A submitted producer has already enqueued its signal. Native handoffs above never wait.
-    if (!DlssNr::FinishedInputReady(latest->producerQueue.Get() == realQueue,
-                                    latest->fence->GetCompletedValue(), latest->ready) &&
-        FAILED(queue->Wait(latest->fence.Get(), latest->ready)))
-    {
-        late.reset = true;
-        late.Say("The graphics queue stopped. Restart the game to retry.");
-        return false;
-    }
     auto& slot = *latest;
     const bool holdFinished = slot.residualOnly && Config::Instance()->DlssNrHoldFrame.value_or_default() &&
                               inputHold.active;

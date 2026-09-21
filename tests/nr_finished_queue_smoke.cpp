@@ -1,4 +1,4 @@
-// A native FG present must not wait for render work gated by that same present.
+// No FG presentation path may wait for render work gated by that same present.
 #include <windows.h>
 #include <d3d12.h>
 #include <dxgi1_4.h>
@@ -30,7 +30,7 @@ int main() try
     Expect(event != nullptr, "Could not create completion event");
     for (UINT64 frame = 1; frame <= 16; ++frame)
     {
-        // Model the next render submission waiting for the current native FG presentation.
+        // A submitted producer signal can sit behind a wait for this presentation.
         Check(render->Wait(presentGate.Get(), frame));
         Check(render->Signal(inputReady.Get(), frame));
         const auto completed = inputReady->GetCompletedValue();
@@ -52,7 +52,7 @@ int main() try
     CloseHandle(event);
     Expect(!DlssNr::FinishedInputReady(false, UINT64_MAX, 1), "Accepted a removed device");
     Expect(!DlssNr::FinishedInputReady(true, UINT64_MAX, 1), "Same-queue bypassed device removal");
-    puts("PASS finished-picture queue readiness: native FG dependency, same-queue order, completed input, device removal");
+    puts("PASS finished-picture queue readiness: presentation dependency, same-queue order, completed input, device removal");
     return 0;
 }
 catch (const std::exception& e) { puts(e.what()); return 1; }

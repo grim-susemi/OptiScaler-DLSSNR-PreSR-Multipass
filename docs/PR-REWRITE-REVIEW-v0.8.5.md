@@ -2,6 +2,8 @@
 
 The implementation uses the reduced NR branch, including its rendering rollback and KCD2 corrections, rebased onto upstream `93fbf1b2`. PRs are source material; their branches were not merged wholesale. No half-rate or evaluation-cadence implementation is included.
 
+**Post-v0.8.6 correction for #70:** the original ordering review below was incomplete. A submitted producer's queued signal can itself depend on presentation; a non-native handoff does not establish that waiting is safe. Current source skips unfinished cross-queue inputs on every presentation path and selects the newest eligible compatible slot without queueing a wait. Same-queue submission order remains sufficient. The published v0.8.5/v0.8.6 binaries still contain the earlier wait. This correction can skip NR on frames whose cross-queue input has not completed; the RDR2 configuration reported in #70 still needs an integration with proven ordering to guarantee NR on every frame.
+
 | Contribution | Correctness review and changes | Brevity review |
 |---|---|---|
 | #82 readiness | Retains separate readiness and retirement predicates. Only submitted GPU completion or the existing epoch transition enables evaluation; discarded recordings cannot complete a probe. Existing replay/generation ownership remains intact. | Reuses the recording's completion predicate and existing mutex. One probe and one latched readiness check; no new fence subsystem. |

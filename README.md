@@ -46,6 +46,8 @@ Experimental NR adds pre/post-upscale and finished-picture processing, multipass
 model resolution, HDR/exposure controls and separate edit upscaling. It defaults off and
 uses a separately supplied `nvngx_dlssnr.dll` through the NVIDIA driver; no NR helper DLL.
 
+Optional [peripheral spatial compression](docs/NR-SPATIAL-COMPRESSION.md) reduces NR work near the screen edges while retaining more centre detail. It supports DX12 and native Vulkan and combines with Model resolution.
+
 See [installation](INSTALL-DLSSNR.md), [controls](docs/NR-PIPELINE-UI.md),
 [game tests and limits](docs/NR-UPSTREAM-REVIEW.md), [implementation](OptiScaler/dlssnr/README.md)
 and [credits](docs/CREDITS.md). Official download links refer to upstream OptiScaler;

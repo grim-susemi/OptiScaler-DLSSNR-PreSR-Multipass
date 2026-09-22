@@ -6,6 +6,8 @@
 #include "precompile/DlssNr_Shader.h"
 #include "precompile/dlssnr_residual_Shader.h"
 #include "precompile/dlssnr_finished_color_Shader.h"
+#include "precompile/dlssnr_spatial_Shader.h"
+#include "precompile/dlssnr_spatial_guides_Shader.h"
 
 namespace
 {
@@ -307,6 +309,45 @@ DlssNr_Dx12::~DlssNr_Dx12()
         _residualPipelineState->Release();
         _residualPipelineState = nullptr;
     }
+    if (_spatialPipelineState != nullptr)
+    {
+        _spatialPipelineState->Release();
+        _spatialPipelineState = nullptr;
+    }
+    if (_spatialGuidesPipelineState != nullptr)
+    {
+        _spatialGuidesPipelineState->Release();
+        _spatialGuidesPipelineState = nullptr;
+    }
+}
+
+bool DlssNr_Dx12::SpatialReady()
+{
+    std::lock_guard ownersLock(nrOwnersMutex);
+    std::lock_guard stateLock(_state->mutex);
+    if (!_init)
+        return false;
+    if (!_spatialPipelineState)
+        CreateComputePipeline(_device, &_spatialPipelineState, dlssnr_spatial_cso,
+                              sizeof(dlssnr_spatial_cso), nullptr);
+    if (!_spatialGuidesPipelineState)
+        CreateComputePipeline(_device, &_spatialGuidesPipelineState, dlssnr_spatial_guides_cso,
+                              sizeof(dlssnr_spatial_guides_cso), nullptr);
+    return _spatialPipelineState != nullptr && _spatialGuidesPipelineState != nullptr;
+}
+
+bool DlssNr_Dx12::DispatchSpatial(ID3D12GraphicsCommandList* cmd, const DlssNr::Spatial::Constants& constants,
+                                  ID3D12Resource* source, ID3D12Resource* depthOrAnswer,
+                                  ID3D12Resource* motion, ID3D12Resource* target, ID3D12Resource* secondary)
+{
+    static_assert(sizeof(DlssNr::Spatial::Constants) == sizeof(DlssNrConstants));
+    DlssNrConstants bytes {};
+    std::memcpy(&bytes, &constants, sizeof(bytes));
+    std::lock_guard ownersLock(nrOwnersMutex);
+    std::lock_guard stateLock(_state->mutex);
+    auto* pipeline = constants.mode == 101 ? _spatialGuidesPipelineState : _spatialPipelineState;
+    return DispatchCompute(cmd, bytes, pipeline, source, depthOrAnswer, motion,
+                           nullptr, nullptr, target, secondary, nullptr);
 }
 
 bool DlssNr_Dx12::DispatchResidualPass(ID3D12GraphicsCommandList* InCmdList, const DlssNrConstants& InConstants,

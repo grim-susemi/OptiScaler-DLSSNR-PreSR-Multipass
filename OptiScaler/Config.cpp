@@ -356,6 +356,17 @@ bool Config::Reload(std::filesystem::path iniPath)
             DlssNrCompareTags.set_from_config(readBool("DlssNr", "CompareTags"));
             DlssNrTagScale.set_from_config(readFloat("DlssNr", "TagScale"));
             DlssNrWorkingScale.set_from_config(readFloat("DlssNr", "WorkingScale"));
+            DlssNrSpatialCompression.set_from_config(readBool("DlssNr", "SpatialCompression"));
+            DlssNrSpatialCenterX.set_from_config(readFloat("DlssNr", "SpatialCenterX"));
+            DlssNrSpatialCenterY.set_from_config(readFloat("DlssNr", "SpatialCenterY"));
+            DlssNrSpatialWorkX.set_from_config(readFloat("DlssNr", "SpatialWorkX"));
+            DlssNrSpatialWorkY.set_from_config(readFloat("DlssNr", "SpatialWorkY"));
+            DlssNrSpatialOffsetX.set_from_config(readFloat("DlssNr", "SpatialOffsetX"));
+            DlssNrSpatialOffsetY.set_from_config(readFloat("DlssNr", "SpatialOffsetY"));
+            DlssNrSpatialShiftX.set_from_config(readFloat("DlssNr", "SpatialShiftX"));
+            DlssNrSpatialShiftY.set_from_config(readFloat("DlssNr", "SpatialShiftY"));
+            DlssNrSpatialShowCenter.set_from_config(readBool("DlssNr", "SpatialShowCenter"));
+            DlssNrSpatialShowWork.set_from_config(readBool("DlssNr", "SpatialShowWork"));
 
             if (auto v = readEnum<Scaler>("DlssNr", "ScalingDownscaler"))
                 DlssNrScalingDownscaler.set_from_config(*v);
@@ -1297,6 +1308,17 @@ bool Config::SaveIni(std::filesystem::path destination)
     ini.SetValue("DlssNr", "TagScale",
                  GetFloatValue(Instance()->DlssNrTagScale.value_for_config()).c_str());
     ini.SetValue("DlssNr", "WorkingScale", GetFloatValue(Instance()->DlssNrWorkingScale.value_for_config()).c_str());
+    ini.SetValue("DlssNr", "SpatialCompression", GetBoolValue(Instance()->DlssNrSpatialCompression.value_for_config()).c_str());
+    ini.SetValue("DlssNr", "SpatialCenterX", GetFloatValue(Instance()->DlssNrSpatialCenterX.value_for_config()).c_str());
+    ini.SetValue("DlssNr", "SpatialCenterY", GetFloatValue(Instance()->DlssNrSpatialCenterY.value_for_config()).c_str());
+    ini.SetValue("DlssNr", "SpatialWorkX", GetFloatValue(Instance()->DlssNrSpatialWorkX.value_for_config()).c_str());
+    ini.SetValue("DlssNr", "SpatialWorkY", GetFloatValue(Instance()->DlssNrSpatialWorkY.value_for_config()).c_str());
+    ini.SetValue("DlssNr", "SpatialOffsetX", GetFloatValue(Instance()->DlssNrSpatialOffsetX.value_for_config()).c_str());
+    ini.SetValue("DlssNr", "SpatialOffsetY", GetFloatValue(Instance()->DlssNrSpatialOffsetY.value_for_config()).c_str());
+    ini.SetValue("DlssNr", "SpatialShiftX", GetFloatValue(Instance()->DlssNrSpatialShiftX.value_for_config()).c_str());
+    ini.SetValue("DlssNr", "SpatialShiftY", GetFloatValue(Instance()->DlssNrSpatialShiftY.value_for_config()).c_str());
+    ini.SetValue("DlssNr", "SpatialShowCenter", GetBoolValue(Instance()->DlssNrSpatialShowCenter.value_for_config()).c_str());
+    ini.SetValue("DlssNr", "SpatialShowWork", GetBoolValue(Instance()->DlssNrSpatialShowWork.value_for_config()).c_str());
     ini.SetValue("DlssNr", "ScalingDownscaler", GetIntValue(Instance()->DlssNrScalingDownscaler).c_str());
 
     ini.SetValue("DlssNr", "Passes", GetIntValue(Instance()->DlssNrPasses.value_for_config()).c_str());

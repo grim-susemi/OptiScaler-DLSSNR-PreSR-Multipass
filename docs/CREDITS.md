@@ -14,6 +14,8 @@ The built-in RTX 40 multi frame generation unlock is adapted from [y4my4my4m's f
 
 ## Fork contributors
 
+- [Yuri Grib / @BeliyG3](https://github.com/BeliyG3) for the MIT-licensed peripheral spatial mapping adapted from [Optimizer FPS for DLSS5](https://github.com/BeliyG3/optimizer-fps-dlss5/tree/64902dd6a02460e5f6b778504ec2a4005faf4d9c). See [spatial compression](NR-SPATIAL-COMPRESSION.md) for integration details.
+
 - [@LorisPicariello](https://github.com/LorisPicariello) for investigating and testing RDR2's Finished Picture NR / OptiFG interaction, and for [PR #70](https://github.com/wilsjo2/OptiScaler-DLSSNR-PreSR-Multipass/pull/70), which informed the rewritten finished-picture ordering and subsequent queue-safety work.
 
 ## OptiScaler contributors

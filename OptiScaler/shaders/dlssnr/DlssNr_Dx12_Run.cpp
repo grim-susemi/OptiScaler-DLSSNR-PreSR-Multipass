@@ -381,14 +381,27 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
         ID3D12Resource* resolveProxy = superDownOk ? nr.colorCopy : modelInput;
         ID3D12Resource* resolveAnswer = superDownOk ? nr.outputNative : finalAnswer;
         bool enlargementReady = true;
-        if (cfg.DlssNrTransfer.value_or_default() == 2 && reduced)
+        const auto transfer = cfg.DlssNrTransfer.value_or_default();
+        bool resizeFieldReadable = false;
+        if (DlssNrUsesDlssEnlargement(transfer) && reduced && (transfer == 2 || workScale < 1.0f))
         {
             auto* enlarged = EnlargeMatchedResidual(cmdList, device, modelInput, finalAnswer, depthIn, motionIn,
                                                     frame, resolveParams, enlargementReset, timingQueue);
             enlargementReady = enlarged != nullptr;
-            if (enlarged) { resolveAnswer = enlarged; resolveParams.Transfer = 2; }
-            if (enlarged && resolveParams.DebugView == 2)
-            { resolveAnswer = finalAnswer; resolveParams.Transfer = 1; } // Inspect the actual model answer.
+            if (enlarged) { resolveAnswer = enlarged; resolveParams.Transfer = transfer; }
+            if (enlarged && transfer == 4)
+            {
+                // Retain the spatial field for the inverse-HDR range guard.
+                resolveProxy = enlarger->input.Get();
+                Barrier(cmdList, resolveProxy, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                resizeFieldReadable = true;
+            }
+            if (enlarged && (resolveParams.DebugView == 2 || (transfer == 4 && resolveParams.DebugView == 1)))
+            {
+                resolveProxy = modelInput; resolveAnswer = finalAnswer;
+                resolveParams.Transfer = DlssNrSpatialTransfer(transfer); // Inspect the actual model pair.
+            }
         }
         else
         {
@@ -415,6 +428,9 @@ auto DlssNr_Dx12::State::Run(ID3D12GraphicsCommandList* cmdList, ID3D12Resource*
             enlargementReady && shader.DispatchPass(cmdList, resolveParams, resolveProxy, resolveAnswer,
                                                     resolveOriginal, encoded.exposure, nullptr, resolveTarget, nullptr);
         compositionSucceeded = resolved;
+        if (resizeFieldReadable)
+            Barrier(cmdList, enlarger->input.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
         if (resolved && !targetSupportsUav)
         {

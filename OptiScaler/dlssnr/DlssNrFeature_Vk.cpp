@@ -59,10 +59,10 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
         return false;
 
     std::lock_guard<std::mutex> lock(mutex);
-    if (cfg.DlssNrTransfer.value_or_default() == 2 && cfg.DlssNrWorkingScale.value_or_default() < 1.0f)
+    if (DlssNrUsesDlssEnlargement(cfg.DlssNrTransfer.value_or_default()) && cfg.DlssNrWorkingScale.value_or_default() < 1.0f)
     {
         PublishStatus(this, Backend::Vulkan,
-                      { false, "Matched residual + DLSS requires the DX12 processing path." });
+                      { false, "DLSS enlargement requires the DX12 processing path." });
         return false;
     }
 

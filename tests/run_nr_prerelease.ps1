@@ -21,6 +21,7 @@ try {
     $shader = "$repo/OptiScaler/shaders/dlssnr/precompile/dlssnr.hlsl"
     RunSmoke 'nr_skin_shader_smoke' @('d3d11.lib', 'd3dcompiler.lib') @($shader) @('/IOptiScaler/include')
     RunSmoke 'nr_replace_detail_smoke' @('d3d11.lib', 'd3dcompiler.lib') @($shader)
+    RunSmoke 'nr_resize_shader_smoke' @('d3d11.lib')
     RunSmoke 'nr_exposure_shader_smoke' @('d3d11.lib', 'd3dcompiler.lib')
     RunSmoke 'nr_residual_rr_smoke' @('d3d11.lib', 'd3dcompiler.lib')
     RunSmoke 'nr_active_color_smoke' @('d3d12.lib', 'dxgi.lib')

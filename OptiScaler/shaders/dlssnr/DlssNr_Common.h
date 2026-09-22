@@ -28,8 +28,17 @@ enum DlssNrMode : uint32_t
     DlssNrMode_EncodeProxyResidual = 9,
     DlssNrMode_Meter = 3,
     DlssNrMode_AutoExposure = 11,
-    DlssNrMode_ResizePrivateGuides = 10
+    DlssNrMode_ResizePrivateGuides = 10,
+    DlssNrMode_EncodeResizeField = 12
 };
+
+inline bool DlssNrUsesDlssEnlargement(uint32_t transfer) { return transfer == 2 || transfer == 4; }
+
+// The spatial mode is used until the caller has supplied an enlarged DLSS carrier.
+inline uint32_t DlssNrSpatialTransfer(uint32_t transfer)
+{
+    return DlssNrUsesDlssEnlargement(transfer) ? transfer - 1 : std::min(transfer, 3u);
+}
 
 // Finished-colour shader's exposure-normalised brightness response, -12..12 stops.
 constexpr uint32_t kDlssNrHdrCurveBins = 48;
@@ -171,7 +180,8 @@ struct alignas(256) DlssNrConstants
     // left and right, so a difference can look like an improvement purely from where it sits.
     uint32_t CompareSwap;
 
-    // How a model that worked below the frame's size is brought back. 0 classic, 1 matched residual.
+    // Below-size reconstruction: 0 classic, 1/2 matched residual spatial/DLSS,
+    // 3/4 relative lighting and chromaticity spatial/DLSS. Native size bypasses resizing.
     //
     // Classic composes the model's own low-resolution picture against the full-resolution frame, so
     // the two disagree by the blur the downsample introduced as well as by the edit -- and the
@@ -261,7 +271,7 @@ class DlssNr_Common
         constants.ColourStrength = config.DlssNrColourStrength.value_or_default();
         constants.DebugView = config.DlssNrDebugView.value_or_default();
         constants.MaxRatio = config.DlssNrMaxRatio.value_or_default();
-        constants.Transfer = std::min(config.DlssNrTransfer.value_or_default(), 1u);
+        constants.Transfer = DlssNrSpatialTransfer(config.DlssNrTransfer.value_or_default());
         constants.DebugScale = config.DlssNrWhitePointScale.value_or_default();
         constants.CompareMode = config.DlssNrCompare.value_or_default();
         constants.CompareSplit = config.DlssNrCompareSplit.value_or_default();

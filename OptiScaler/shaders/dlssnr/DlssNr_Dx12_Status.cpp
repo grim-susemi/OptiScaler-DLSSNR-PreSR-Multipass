@@ -26,7 +26,7 @@ auto DlssNr_Dx12::State::RetryAfterFailure() -> void
 auto DlssNr_Dx12::State::ConsumeControls() -> void
 {
     const auto& cfg = *Config::Instance();
-    if (!cfg.DlssNrEnabled.value_or_default() || cfg.DlssNrTransfer.value_or_default() != 2 ||
+    if (!cfg.DlssNrEnabled.value_or_default() || !DlssNrUsesDlssEnlargement(cfg.DlssNrTransfer.value_or_default()) ||
         cfg.DlssNrWorkingScale.value_or_default() >= 1.0f)
     {
         ReleaseEnlarger();

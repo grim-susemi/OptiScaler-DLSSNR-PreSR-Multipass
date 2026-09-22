@@ -53,7 +53,7 @@ try
     static_assert(sizeof(DlssNrConstants) == 256);
 
     ComPtr<ID3DBlob> code, errors;
-    HRESULT compiled = D3DCompileFromFile(argv[1], nullptr, nullptr, "CSMain", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3,
+    HRESULT compiled = D3DCompileFromFile(argv[1], nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "CSMain", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3,
                                           0, &code, &errors);
     if (errors)
         std::fprintf(stderr, "%s", (char*) errors->GetBufferPointer());

@@ -35,7 +35,7 @@ ID3D12Resource* DlssNr_Dx12::State::EnlargeMatchedResidual(ID3D12GraphicsCommand
     if (frame.BeforeUpscale)
     {
         ReleaseEnlarger();
-        return say("Matched residual + DLSS requires NR after the game upscaler.");
+        return say("DLSS enlargement requires NR after the game upscaler.");
     }
     // The swapchain queue can be Streamline's presentation queue, not the NR producer.
     // Native processing learns its queue from the actual creation submission below.
@@ -50,11 +50,12 @@ ID3D12Resource* DlssNr_Dx12::State::EnlargeMatchedResidual(ID3D12GraphicsCommand
     Microsoft::WRL::ComPtr<ID3D12Device> queueDevice;
     if (queue && (FAILED(queue->GetDevice(IID_PPV_ARGS(&queueDevice))) || queueDevice.Get() != device))
         return say("NR DLSS enlargement queue/device mismatch.");
+    const bool structural = resolve.Transfer == 3;
     const auto desc = proxy->GetDesc();
     const unsigned w = unsigned(desc.Width), h = desc.Height;
     if (enlarger && (enlarger->w != w || enlarger->h != h || enlarger->outW != resolve.Width ||
         enlarger->outH != resolve.Height || (queue && enlarger->queue.Get() != queue) ||
-        enlarger->depthInverted != frame.DepthInverted)) ReleaseEnlarger();
+        enlarger->depthInverted != frame.DepthInverted || enlarger->structural != structural)) ReleaseEnlarger();
     CollectEnlargers();
     if (!enlarger)
     {
@@ -62,7 +63,7 @@ ID3D12Resource* DlssNr_Dx12::State::EnlargeMatchedResidual(ID3D12GraphicsCommand
         enlarger = std::make_unique<Enlarger>();
         auto& g = *enlarger;
         g.w = w; g.h = h; g.outW = resolve.Width; g.outH = resolve.Height;
-        g.depthInverted = frame.DepthInverted; g.queue = queue;
+        g.depthInverted = frame.DepthInverted; g.queue = queue; g.structural = structural;
         g.input.Attach(CreateScratch(device, DXGI_FORMAT_R16G16B16A16_FLOAT, w, h));
         g.output.Attach(CreateScratch(device, DXGI_FORMAT_R16G16B16A16_FLOAT, g.outW, g.outH));
         g.depth.Attach(CreateScratch(device, DXGI_FORMAT_R32_FLOAT, w, h));
@@ -83,7 +84,7 @@ ID3D12Resource* DlssNr_Dx12::State::EnlargeMatchedResidual(ID3D12GraphicsCommand
         info.quality = 2; info.depthInverted = frame.DepthInverted;
         info.rayReconstruction = false; // This carrier comes from an already reconstructed image.
         if (!g.dlss->Init(device, cmd, info)) return say("Private DLSS SR: " + g.dlss->Error());
-        LOG_INFO("NR matched residual: private DLSS SR created at {}x{} -> {}x{}", w, h, g.outW, g.outH);
+        LOG_INFO("NR enlargement: private DLSS SR created at {}x{} -> {}x{}", w, h, g.outW, g.outH);
         ID3D12GraphicsCommandList* real = nullptr;
         g.creation = Util::CheckForRealObject(__FUNCTION__, cmd, (IUnknown**)&real) ? real : cmd;
         g.failed = false;
@@ -100,7 +101,8 @@ ID3D12Resource* DlssNr_Dx12::State::EnlargeMatchedResidual(ID3D12GraphicsCommand
     if (!regions.depth.valid() || !regions.motion.valid()) return say("DLSS enlargement needs valid depth and motion.");
     lifetime.Record(cmd);
     g.lifetime.Record(cmd);
-    DlssNrConstants encode {}; encode.Mode = DlssNrMode_EncodeProxyResidual;
+    DlssNrConstants encode {};
+    encode.Mode = structural ? DlssNrMode_EncodeResizeField : DlssNrMode_EncodeProxyResidual;
     encode.Width = w; encode.Height = h; encode.Passthrough = resolve.Passthrough;
     bool ok = shader.DispatchPass(cmd, encode, proxy, answer, nullptr, nullptr, nullptr, g.input.Get(), nullptr);
     DlssNrConstants guides {}; guides.Mode = DlssNrMode_ResizePrivateGuides;
@@ -132,7 +134,7 @@ ID3D12Resource* DlssNr_Dx12::State::EnlargeMatchedResidual(ID3D12GraphicsCommand
     f.frameTimeMs = std::isfinite(frame.FrameTimeMs) && frame.FrameTimeMs > 0 ? frame.FrameTimeMs : 16.67f;
     ok = g.dlss->Evaluate(cmd, f);
     if (ok && g.lastFrame == 0)
-        LOG_INFO("NR matched residual: first private DLSS SR evaluation succeeded on producer queue {}",
+        LOG_INFO("NR enlargement: first private DLSS SR evaluation succeeded on producer queue {}",
                  (void*)g.queue.Get());
     for (auto* r : { g.input.Get(), g.depth.Get(), g.motion.Get() })
         Barrier(cmd, r, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);

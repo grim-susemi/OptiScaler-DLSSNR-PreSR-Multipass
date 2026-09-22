@@ -514,7 +514,13 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
                 currentFeature->TickFrozenCheck();
         }
 
-        if (cq && (fg == nullptr || !fg->IsActive() || fg->IsPaused()))
+        // XeFG's app-facing Present composes NR before the provider takes the frame,
+        // even with interpolation off. Its internal display buffer is not that frame.
+        const bool xeFgGamePicture = fg != nullptr && State::Instance().currentFGSwapchain != nullptr &&
+                                     State::Instance().activeFgOutput == FGOutput::XeFG &&
+                                     State::Instance().swapchainInteropApi == SwapchainInteropApi::None &&
+                                     fg->Hwnd() == hWnd;
+        if (cq && !xeFgGamePicture && (fg == nullptr || !fg->IsActive() || fg->IsPaused()))
             DlssNr::ApplyToFinishedPicture(pSwapChain, cq);
         else if (isD3D11 && State::Instance().swapchainInteropApi == SwapchainInteropApi::None)
             DlssNr::ApplyToFinishedPictureDx11(pSwapChain);

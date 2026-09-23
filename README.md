@@ -1,4 +1,4 @@
-> **v0.8.7 prerelease:** [finished-picture queue safety fix and validation](docs/RELEASE-v0.8.7.md).
+> **v0.8.9 prerelease:** [optional peripheral compression and finished-picture queue candidate](docs/RELEASE-v0.8.9.md).
 
 <div align="center">
 

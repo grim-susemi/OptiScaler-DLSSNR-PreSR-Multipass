@@ -173,8 +173,8 @@ void DlssNr_Dx12::State::EncodeInput(EncodeContext& context)
     encodeParams.Height = height;
 
     TransitionTarget(D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    shader.DispatchPass(cmdList, encodeParams, target, nullptr, nullptr, context.exposure, nullptr, nr.colorCopy,
-                        nr.hdrCopy);
+    context.encodeSucceeded = shader.DispatchPass(cmdList, encodeParams, target, nullptr, nullptr,
+                                                  context.exposure, nullptr, nr.colorCopy, nr.hdrCopy);
 
     if (targetSupportsUav)
         TransitionTarget(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -188,7 +188,7 @@ void DlssNr_Dx12::State::EncodeInput(EncodeContext& context)
     // enlarged during the resolve while the frame underneath stays full size and untouched.
     modelInput = nr.colorCopy;
 
-    if (reduced && nr.colorSmall != nullptr)
+    if (reduced && !context.spatial && nr.colorSmall != nullptr)
     {
         bool built = false;
 

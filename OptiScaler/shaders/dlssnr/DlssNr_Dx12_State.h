@@ -137,7 +137,9 @@ struct DlssNr_Dx12::State
 
     void ParkNrResource(ID3D12Resource*& resource);
 
-    void ReleaseSurfacesIfFormatChanged(DXGI_FORMAT needed);
+    void ReleaseSurfacesIfFormatChanged(DXGI_FORMAT modelFormat, DXGI_FORMAT nativeFormat);
+    bool PrepareSpatialResources(ID3D12Device* device, const DlssNr::Spatial::Layout& layout);
+    void ReleaseSpatialResources();
     void ReleaseSupersamplers();
 
     ID3D12Resource* CreateScratch(ID3D12Device* device, DXGI_FORMAT format, unsigned int width, unsigned int height);
@@ -382,7 +384,7 @@ struct DlssNr_Dx12::State
     bool PrepareRunModels(ID3D12GraphicsCommandList* cmdList, ID3D12Device* device,
                           const DlssNrFrameInfo& frame, const D3D12_RESOURCE_DESC& desc,
                           DlssNr::ColorExtent native, DlssNr::ColorExtent work,
-                          float workScale, unsigned int requestedPasses);
+                          float workScale, unsigned int requestedPasses, bool spatial);
     struct EncodeContext
     {
         ID3D12GraphicsCommandList* cmdList;
@@ -392,6 +394,8 @@ struct DlssNr_Dx12::State
         const DlssNrFrameInfo& frame;
         float workScale;
         bool targetSupportsUav;
+        bool spatial = false;
+        bool encodeSucceeded = false;
         float whitePoint = 1.0f;
         ID3D12Resource* modelInput = nullptr;
         ID3D12Resource* exposure = nullptr;

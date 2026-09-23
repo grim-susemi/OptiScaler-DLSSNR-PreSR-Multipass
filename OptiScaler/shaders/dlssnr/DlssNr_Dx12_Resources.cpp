@@ -9,13 +9,15 @@ auto DlssNr_Dx12::State::ParkNrResource(ID3D12Resource*& resource) -> void
     lifetime.Retire([retired] { retired->Release(); });
 }
 
-auto DlssNr_Dx12::State::ReleaseSurfacesIfFormatChanged(DXGI_FORMAT needed) -> void
+auto DlssNr_Dx12::State::ReleaseSurfacesIfFormatChanged(DXGI_FORMAT modelFormat, DXGI_FORMAT nativeFormat) -> void
 {
-    if (nr.output == nullptr || nr.output->GetDesc().Format == needed)
+    if (nr.output == nullptr ||
+        (nr.output->GetDesc().Format == modelFormat && nr.colorCopy && nr.hdrCopy &&
+         nr.colorCopy->GetDesc().Format == nativeFormat && nr.hdrCopy->GetDesc().Format == nativeFormat))
         return;
 
-    LOG_INFO("DLSS-NR rebuilding surfaces: format {} -> {} (inject point changed)",
-             (int) nr.output->GetDesc().Format, (int) needed);
+    LOG_INFO("DLSS-NR rebuilding surfaces: model format {} -> {}, frame format {}",
+             (int) nr.output->GetDesc().Format, (int) modelFormat, (int) nativeFormat);
 
     for (auto& model : nr.models)
         model.RetryAfterFailure();
@@ -29,6 +31,56 @@ auto DlssNr_Dx12::State::ReleaseSurfacesIfFormatChanged(DXGI_FORMAT needed) -> v
     nr.passScratchFailed = false;
 
     nr.reset = true;
+}
+
+void DlssNr_Dx12::State::ReleaseSpatialResources()
+{
+    for (auto** resource : { &nr.spatialColor, &nr.spatialDepth, &nr.spatialMotion,
+                             &nr.spatialProxy, &nr.spatialAnswer, &nr.spatialProxyNative,
+                             &nr.spatialAnswerNative })
+        ParkNrResource(*resource);
+}
+
+bool DlssNr_Dx12::State::PrepareSpatialResources(ID3D12Device* device, const DlssNr::Spatial::Layout& layout)
+{
+    const auto matches = [](ID3D12Resource* resource, DXGI_FORMAT format, unsigned w, unsigned h)
+    {
+        if (!resource) return false;
+        const auto desc = resource->GetDesc();
+        return desc.Format == format && desc.Width == w && desc.Height == h;
+    };
+    if (!matches(nr.spatialColor, DXGI_FORMAT_R16G16B16A16_FLOAT, layout.modelW, layout.modelH) ||
+        !matches(nr.spatialDepth, DXGI_FORMAT_R32_FLOAT, layout.modelW, layout.modelH) ||
+        !matches(nr.spatialMotion, DXGI_FORMAT_R32G32_FLOAT, layout.modelW, layout.modelH) ||
+        !matches(nr.spatialProxy, DXGI_FORMAT_R16G16B16A16_FLOAT, layout.ordinaryW, layout.ordinaryH) ||
+        !matches(nr.spatialAnswer, DXGI_FORMAT_R16G16B16A16_FLOAT, layout.ordinaryW, layout.ordinaryH) ||
+        (layout.globalScale > 1.0f &&
+         (!matches(nr.spatialProxyNative, DXGI_FORMAT_R16G16B16A16_FLOAT, layout.nativeW, layout.nativeH) ||
+          !matches(nr.spatialAnswerNative, DXGI_FORMAT_R16G16B16A16_FLOAT, layout.nativeW, layout.nativeH))))
+    {
+        ReleaseSpatialResources();
+        nr.spatialColor = CreateScratch(device, DXGI_FORMAT_R16G16B16A16_FLOAT, layout.modelW, layout.modelH);
+        nr.spatialDepth = CreateScratch(device, DXGI_FORMAT_R32_FLOAT, layout.modelW, layout.modelH);
+        nr.spatialMotion = CreateScratch(device, DXGI_FORMAT_R32G32_FLOAT, layout.modelW, layout.modelH);
+        nr.spatialProxy = CreateScratch(device, DXGI_FORMAT_R16G16B16A16_FLOAT,
+                                        layout.ordinaryW, layout.ordinaryH);
+        nr.spatialAnswer = CreateScratch(device, DXGI_FORMAT_R16G16B16A16_FLOAT,
+                                         layout.ordinaryW, layout.ordinaryH);
+        if (layout.globalScale > 1.0f)
+        {
+            nr.spatialProxyNative = CreateScratch(device, DXGI_FORMAT_R16G16B16A16_FLOAT,
+                                                   layout.nativeW, layout.nativeH);
+            nr.spatialAnswerNative = CreateScratch(device, DXGI_FORMAT_R16G16B16A16_FLOAT,
+                                                    layout.nativeW, layout.nativeH);
+        }
+    }
+    const bool ready = nr.spatialColor && nr.spatialDepth && nr.spatialMotion &&
+                       nr.spatialProxy && nr.spatialAnswer &&
+                       (layout.globalScale <= 1.0f ||
+                        (nr.spatialProxyNative && nr.spatialAnswerNative));
+    if (!ready)
+        ReleaseSpatialResources();
+    return ready;
 }
 
 auto DlssNr_Dx12::State::CreateScratch(ID3D12Device* device, DXGI_FORMAT format, unsigned int width, unsigned int height) -> ID3D12Resource*
@@ -170,7 +222,7 @@ auto DlssNr_Dx12::State::GetResource(NVSDK_NGX_Parameter* params, const char* a,
 
 void DlssNr_Dx12::State::ReleaseSupersamplers()
 {
-    for (auto** scaler : { &nr.superUp, &nr.superDown })
+    for (auto** scaler : { &nr.superUp, &nr.superDown, &nr.spatialProxyDown })
         if (auto* retired = std::exchange(*scaler, nullptr))
             lifetime.Retire([retired] { delete retired; });
 }
@@ -192,6 +244,10 @@ auto DlssNr_Dx12::State::ReleaseResources() -> void
     for (auto** resource : { &nr.output, &nr.passScratch, &nr.passClamp, &nr.colorCopy, &nr.hdrCopy,
                              &nr.activeColor, &nr.colorSmall })
         ParkNrResource(*resource);
+    ReleaseSpatialResources();
+    nr.spatialSignatureValid = false;
+    nr.spatialFallback = false;
+    nr.spatialActive = false;
     nr.passScratchFailed = false;
 
     ReleaseSupersamplers();

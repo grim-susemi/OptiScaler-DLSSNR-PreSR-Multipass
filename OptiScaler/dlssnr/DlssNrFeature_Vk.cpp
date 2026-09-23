@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <format>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -59,6 +60,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
         return false;
 
     std::lock_guard<std::mutex> lock(mutex);
+    state.spatialRan = false;
     if (DlssNrUsesDlssEnlargement(cfg.DlssNrTransfer.value_or_default()) && cfg.DlssNrWorkingScale.value_or_default() < 1.0f)
     {
         PublishStatus(this, Backend::Vulkan,
@@ -72,9 +74,11 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
         ~ReportStatus()
         {
             const auto& state = owner->state;
-            PublishStatus(owner, Backend::Vulkan,
-                          { state.models[0].feature != nullptr && !state.failed, state.reason, state.lastGpuTime,
-                            state.frames });
+            StatusSnapshot snapshot { state.models[0].feature != nullptr && !state.failed, state.reason,
+                                      state.lastGpuTime, state.frames };
+            snapshot.spatialStatus = state.spatialStatus;
+            snapshot.spatialActive = state.spatialRan;
+            PublishStatus(owner, Backend::Vulkan, snapshot);
         }
     } report { this };
     const auto requests = ReadControlRequests();
@@ -125,7 +129,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     const auto motionX = frame.MotionSubrectBaseX, motionY = frame.MotionSubrectBaseY;
     const auto outputWidth = frame.OutputWidth ? frame.OutputWidth : target.Width;
     const auto outputHeight = frame.OutputHeight ? frame.OutputHeight : target.Height;
-    const auto guides =
+    auto guides =
         ResolveGuideRegions({ depth->Resource.ImageViewInfo.Width, depth->Resource.ImageViewInfo.Height },
                             { motion->Resource.ImageViewInfo.Width, motion->Resource.ImageViewInfo.Height },
                             { renderWidth, renderHeight }, { outputWidth, outputHeight },
@@ -140,9 +144,46 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     // The model uses working resolution; source and composition remain native.
     float workScale = cfg.DlssNrWorkingScale.value_or_default();
     workScale = std::isfinite(workScale) ? std::clamp(workScale, 0.25f, 2.0f) : 1.0f;
-    const uint32_t workWidth = std::max(1u, (uint32_t) (width * workScale + 0.5f));
-    const uint32_t workHeight = std::max(1u, (uint32_t) (height * workScale + 0.5f));
-    const bool reduced = workWidth != width || workHeight != height;
+    auto spatial = Spatial::Build(Spatial::ReadSettings(cfg), width, height, workScale);
+    if (state.spatialDisabled &&
+        (spatial != state.spatialAttemptLayout || colourInfo.Format != state.spatialColourFormat ||
+         depthInfo.Format != state.spatialDepthFormat || motionInfo.Format != state.spatialMotionFormat ||
+         depthInfo.Width != state.spatialDepthWidth || depthInfo.Height != state.spatialDepthHeight ||
+         motionInfo.Width != state.spatialMotionWidth || motionInfo.Height != state.spatialMotionHeight))
+    {
+        state.spatialDisabled = false;
+        state.spatialStatus.clear();
+    }
+    state.spatialAttemptLayout = spatial;
+    state.spatialColourFormat = colourInfo.Format;
+    state.spatialDepthFormat = depthInfo.Format;
+    state.spatialMotionFormat = motionInfo.Format;
+    state.spatialDepthWidth = depthInfo.Width;
+    state.spatialDepthHeight = depthInfo.Height;
+    state.spatialMotionWidth = motionInfo.Width;
+    state.spatialMotionHeight = motionInfo.Height;
+    if (spatial.active && !state.pass->SpatialReady())
+    {
+        state.spatialDisabled = true;
+        state.spatialStatus = "Spatial compression unavailable: Vulkan shader pipeline failed";
+    }
+    if (state.spatialDisabled)
+        spatial.active = false;
+    if (!state.spatialDisabled)
+    {
+        if (spatial.active)
+            state.spatialStatus = std::format("Spatial compression {}x{} → {}x{} ({:.1f}% pixels)",
+                                               spatial.ordinaryW, spatial.ordinaryH, spatial.modelW, spatial.modelH,
+                                               100.0 * double(spatial.modelW) * spatial.modelH /
+                                                   (double(spatial.ordinaryW) * spatial.ordinaryH));
+        else if (spatial.requested)
+            state.spatialStatus = spatial.reason;
+        else
+            state.spatialStatus.clear();
+    }
+    const uint32_t workWidth = spatial.active ? spatial.modelW : spatial.ordinaryW;
+    const uint32_t workHeight = spatial.active ? spatial.modelH : spatial.ordinaryH;
+    const bool reduced = !spatial.active && (workWidth != width || workHeight != height);
     const unsigned int passes =
         std::clamp(cfg.DlssNrPasses.value_or_default(), 1u,
                    cfg.DlssNrUnlockPasses.value_or_default() ? DlssNr::MaxPassCount : DlssNr::DefaultMaxPassCount);
@@ -158,8 +199,30 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     }
     state.device = device;
 
-    if (!PrepareModels(cmdBuffer, frame, width, height, workWidth, workHeight, workScale, passes))
+    if (!PrepareModels(cmdBuffer, frame, width, height, workWidth, workHeight, workScale, passes, spatial))
         return false;
+
+    if (spatial.active && workScale > 1.0f)
+    {
+        const Scaler wantScaler = cfg.DlssNrScalingDownscaler.value_or_default();
+        if (state.nrScaler != wantScaler)
+        {
+            if (vkDeviceWaitIdle(state.device) != VK_SUCCESS)
+            {
+                Fail("the Vulkan device could not retire the supersampling filter");
+                return false;
+            }
+            state.superDown.reset();
+            state.spatialDownProxy.reset();
+            state.nrScaler = wantScaler;
+        }
+        if (!state.superDown)
+            state.superDown = std::make_unique<OS_Vk>("DLSS-NR VK spatial downsample", device,
+                                                       physicalDevice, false, wantScaler);
+        if (!state.spatialDownProxy)
+            state.spatialDownProxy = std::make_unique<OS_Vk>("DLSS-NR VK spatial proxy downsample", device,
+                                                              physicalDevice, false, wantScaler);
+    }
 
     // -----------------------------------------------------------------------------------------
     // Encode: the frame the upscaler wrote -> a display-referred proxy, plus an untouched copy
@@ -268,6 +331,42 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     // downsample makes the small one the model actually reads.
     ImageVk* modelInput = &state.proxy;
 
+    if (spatial.active)
+    {
+        Transition(cmdBuffer, state.proxy, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        Transition(cmdBuffer, state.spatialProxy, VK_IMAGE_LAYOUT_GENERAL);
+        auto constants = Spatial::MakeConstants(spatial, 100, guides, frame.MvScaleX, frame.MvScaleY, width, height);
+        if (!state.pass->DispatchSpatial(cmdBuffer, constants, state.proxy.info.ImageView, VK_NULL_HANDLE,
+                                         VK_NULL_HANDLE,
+                                         state.spatialProxy.info.ImageView, VK_NULL_HANDLE))
+        {
+            state.spatialDisabled = true;
+            state.spatialStatus = "Spatial compression unavailable: colour packing failed";
+            return false;
+        }
+
+        Transition(cmdBuffer, state.spatialDepth, VK_IMAGE_LAYOUT_GENERAL);
+        Transition(cmdBuffer, state.spatialMotion, VK_IMAGE_LAYOUT_GENERAL);
+        constants = Spatial::MakeConstants(spatial, 101, guides, frame.MvScaleX, frame.MvScaleY, width, height);
+        if (!state.pass->DispatchSpatial(cmdBuffer, constants, VK_NULL_HANDLE, depthInfo.ImageView,
+                                         motionInfo.ImageView,
+                                         state.spatialDepth.info.ImageView, state.spatialMotion.info.ImageView,
+                                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                         frame.DepthReadWrite ? VK_IMAGE_LAYOUT_GENERAL
+                                                              : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                         frame.MotionReadWrite ? VK_IMAGE_LAYOUT_GENERAL
+                                                               : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
+        {
+            state.spatialDisabled = true;
+            state.spatialStatus = "Spatial compression unavailable: guide packing failed";
+            return false;
+        }
+        depthResource = WrapImage(state.spatialDepth.info, true);
+        motionResource = WrapImage(state.spatialMotion.info, true);
+        guides = { { 0, 0, workWidth, workHeight }, { 0, 0, workWidth, workHeight } };
+        modelInput = &state.spatialProxy;
+    }
+
     if (reduced && state.proxySmall.Valid())
     {
         bool built = false;
@@ -288,6 +387,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
                 }
                 state.superUp.reset();
                 state.superDown.reset();
+                state.spatialDownProxy.reset();
                 state.nrScaler = wantScaler;
             }
             if (!state.superUp)
@@ -344,8 +444,13 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
 
     float mvX = frame.MvScaleX, mvY = frame.MvScaleY;
     // Match D3D12: preserve the game's vector encoding, then adjust only for the NR working scale.
-    mvX *= (float) workWidth / width;
-    mvY *= (float) workHeight / height;
+    if (spatial.active)
+        mvX = mvY = 1.0f; // packed vectors already carry displacement in packed pixels
+    else
+    {
+        mvX *= (float) workWidth / width;
+        mvY *= (float) workHeight / height;
+    }
     ImageVk* answer = &state.output;
     ImageVk* input = modelInput;
     bool clampFailed = false;
@@ -388,6 +493,13 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     if (evaluated != NVSDK_NGX_Result_Success)
     {
         LOG_ERROR("DLSS-NR Vulkan: evaluate returned 0x{:X}", static_cast<unsigned int>(evaluated));
+        if (spatial.active)
+        {
+            state.spatialDisabled = true;
+            state.spatialStatus = "Spatial compression unavailable: the driver rejected the packed evaluation";
+            state.reset = true;
+            return false;
+        }
         Fail("the model refused to evaluate");
         return false;
     }
@@ -405,12 +517,57 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
     ImageVk* resolveProxy = modelInput;
     ImageVk* resolveAnswer = answer;
 
-    if (workScale > 1.0f && state.superDown && state.superDown->IsInit() && state.outputNative.Valid())
+    if (spatial.active)
     {
+        Transition(cmdBuffer, *modelInput, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         Transition(cmdBuffer, *answer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        Transition(cmdBuffer, state.spatialProxyUnpacked, VK_IMAGE_LAYOUT_GENERAL);
+        Transition(cmdBuffer, state.spatialAnswerUnpacked, VK_IMAGE_LAYOUT_GENERAL);
+        const auto constants = Spatial::MakeConstants(spatial, 102, guides, frame.MvScaleX, frame.MvScaleY,
+                                                       width, height);
+        if (!state.pass->DispatchSpatial(cmdBuffer, constants, modelInput->info.ImageView, answer->info.ImageView,
+                                         VK_NULL_HANDLE,
+                                         state.spatialProxyUnpacked.info.ImageView,
+                                         state.spatialAnswerUnpacked.info.ImageView))
+        {
+            state.spatialDisabled = true;
+            state.spatialStatus = "Spatial compression unavailable: answer unpacking failed";
+            return false;
+        }
+        resolveProxy = &state.spatialProxyUnpacked;
+        resolveAnswer = &state.spatialAnswerUnpacked;
+    }
+
+    if (spatial.active && workScale > 1.0f)
+    {
+        if (!state.superDown || !state.superDown->IsInit() || !state.spatialDownProxy ||
+            !state.spatialDownProxy->IsInit())
+        {
+            state.spatialDisabled = true;
+            state.spatialStatus = "Spatial compression unavailable: downsampling filter failed";
+            return false;
+        }
+        Transition(cmdBuffer, *resolveProxy, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        Transition(cmdBuffer, *resolveAnswer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        Transition(cmdBuffer, state.spatialProxyNative, VK_IMAGE_LAYOUT_GENERAL);
+        Transition(cmdBuffer, state.outputNative, VK_IMAGE_LAYOUT_GENERAL);
+        if (!state.spatialDownProxy->DispatchResources(cmdBuffer, resolveProxy->info,
+                                                        state.spatialProxyNative.info) ||
+            !state.superDown->DispatchResources(cmdBuffer, resolveAnswer->info, state.outputNative.info))
+        {
+            state.spatialDisabled = true;
+            state.spatialStatus = "Spatial compression unavailable: matched downsampling failed";
+            return false;
+        }
+        resolveProxy = &state.spatialProxyNative;
+        resolveAnswer = &state.outputNative;
+    }
+    else if (workScale > 1.0f && state.superDown && state.superDown->IsInit() && state.outputNative.Valid())
+    {
+        Transition(cmdBuffer, *resolveAnswer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         Transition(cmdBuffer, state.outputNative, VK_IMAGE_LAYOUT_GENERAL);
 
-        VkImageInfo dsin = answer->info;
+        VkImageInfo dsin = resolveAnswer->info;
         VkImageInfo dsout = state.outputNative.info;
 
         if (state.superDown->DispatchResources(cmdBuffer, dsin, dsout))
@@ -465,6 +622,7 @@ bool ModelVk::Impl::Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colou
         LOG_INFO("DLSS-NR Vulkan: running {} SR at {}x{}, guides {}x{}", beforeSr ? "before" : "after", width,
                  height, guideWidth, guideHeight);
     }
+    state.spatialRan = spatial.active;
     return true;
 }
 

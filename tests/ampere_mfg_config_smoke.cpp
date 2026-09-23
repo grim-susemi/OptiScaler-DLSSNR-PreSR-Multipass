@@ -16,8 +16,8 @@
 //   b  AmpereMfgMaxFrames is clamped into 1..5 on load (9 -> 5) and the saved value is the clamped one
 //   c  the "value || ampereUnlock" rule: unlock on => the save yields External=true even when the file says
 //      false; unlock off => the stored External value survives unchanged
-//   d  a save after a load removes none of the five keys and no other key (produced INI compared byte for byte)
-//   e  the shipped OptiScaler.ini carries the five keys with the documented defaults, and a save of it leaves
+//   d  a save after a load removes none of the four keys and no other key (produced INI compared byte for byte)
+//   e  the shipped OptiScaler.ini carries the four keys with the documented defaults, and a save of it leaves
 //      the Ada keys and every other key exactly as they were
 //
 // Exit codes: 0 = every case passed, 1 = at least one row failed, 3 = the --trap-legacy-strip fixture failed as
@@ -332,7 +332,7 @@ std::set<std::string> ValueMap(const fs::path& path)
 }
 
 // Records the produced INI against its fixture: normalized-identical bytes, the lines the save added or removed,
-// and the five key values as they came back off disk.
+// and the four key values as they came back off disk.
 ProducedRow RecordProduced(const std::string& name, const fs::path& fixture, const fs::path& produced)
 {
     const auto fixtureLines = NormalizedLines(ReadText(fixture));
@@ -352,8 +352,7 @@ ProducedRow RecordProduced(const std::string& name, const fs::path& fixture, con
     std::vector<std::string> values { ValueIn(produced, "FrameGen", "External"),
                                       ValueIn(produced, "DLSSG", "AmpereMfgUnlock"),
                                       ValueIn(produced, "DLSSG", "AmpereMfgMaxFrames"),
-                                      ValueIn(produced, "DLSSG", "AmpereMfgKernelImage"),
-                                      ValueIn(produced, "DLSSG", "AmpereMfgHardwareBilinear") };
+                                      ValueIn(produced, "DLSSG", "AmpereMfgKernelImage") };
 
     ProducedRow row { fixture.string(),
                       produced.string(),
@@ -367,22 +366,20 @@ ProducedRow RecordProduced(const std::string& name, const fs::path& fixture, con
     return row;
 }
 
-// What the five keys hold in the loaded configuration right now.
+// What the four keys hold in the loaded configuration right now.
 std::string LoadedValues()
 {
     return JoinValues({ BoolText(Instance()->ExternalFrameGeneration.value_or_default()),
                         BoolText(Instance()->FGDLSSGAmpereMfgUnlock.value_or_default()),
                         std::to_string(Instance()->FGDLSSGAmpereMfgMaxFrames.value_or_default()),
-                        Instance()->FGDLSSGAmpereMfgKernelImage.value_for_config_or("auto"),
-                        BoolText(Instance()->FGDLSSGAmpereMfgHardwareBilinear.value_or_default()) });
+                        Instance()->FGDLSSGAmpereMfgKernelImage.value_for_config_or("auto") });
 }
 
 std::string ProducedValues(const fs::path& produced)
 {
     return JoinValues({ ValueIn(produced, "FrameGen", "External"), ValueIn(produced, "DLSSG", "AmpereMfgUnlock"),
                         ValueIn(produced, "DLSSG", "AmpereMfgMaxFrames"),
-                        ValueIn(produced, "DLSSG", "AmpereMfgKernelImage"),
-                        ValueIn(produced, "DLSSG", "AmpereMfgHardwareBilinear") });
+                        ValueIn(produced, "DLSSG", "AmpereMfgKernelImage") });
 }
 
 // ---------------------------------------------------------------------------
@@ -400,20 +397,19 @@ bool CaseRoundTrip()
                                         { "DLSSG", "AdaMfgUnlock", "false" },
                                         { "DLSSG", "AmpereMfgUnlock", "true" },
                                         { "DLSSG", "AmpereMfgMaxFrames", "4" },
-                                        { "DLSSG", "AmpereMfgKernelImage", "PTX" },
-                                        { "DLSSG", "AmpereMfgHardwareBilinear", "true" } });
+                                        { "DLSSG", "AmpereMfgKernelImage", "PTX" } });
 
     LoadFixture(fixture);
-    Check(id, "loaded values (External|unlock|frames|kernel|bilinear)", "true|true|4|PTX|true", LoadedValues());
+    Check(id, "loaded values (External|unlock|frames|kernel)", "true|true|4|PTX", LoadedValues());
 
     const auto produced = SaveProduced("a");
     RecordProduced("a", fixture, produced);
-    Check(id, "produced values (External|unlock|frames|kernel|bilinear)", "true|true|4|PTX|true",
+    Check(id, "produced values (External|unlock|frames|kernel)", "true|true|4|PTX",
           ProducedValues(produced));
 
     // The produced file must read back into the same configuration.
     LoadFixture(produced);
-    Check(id, "reloaded values", "true|true|4|PTX|true", LoadedValues());
+    Check(id, "reloaded values", "true|true|4|PTX", LoadedValues());
     return g_fails == before;
 }
 
@@ -497,7 +493,7 @@ bool CaseOwnership()
 }
 
 // ---------------------------------------------------------------------------
-// d) a save after a load removes none of the five keys
+// d) a save after a load removes none of the four keys
 // ---------------------------------------------------------------------------
 bool CaseStrip(const std::string& id, bool applyLegacyRemoval)
 {
@@ -511,7 +507,6 @@ bool CaseStrip(const std::string& id, bool applyLegacyRemoval)
                                             { "DLSSG", "AmpereMfgUnlock", "true" },
                                             { "DLSSG", "AmpereMfgMaxFrames", "4" },
                                             { "DLSSG", "AmpereMfgKernelImage", "PTX" },
-                                            { "DLSSG", "AmpereMfgHardwareBilinear", "true" },
                                             { "DLSSG", "UseGamesReflexMarkers", "auto" } });
 
     LoadFixture(fixture);
@@ -520,18 +515,17 @@ bool CaseStrip(const std::string& id, bool applyLegacyRemoval)
     if (applyLegacyRemoval)
     {
         // The net effect of the v0.8.7 removal list applied by hand: it ran AFTER the [FrameGen] External
-        // write, so all five keys ended up missing from the saved file. The assertions below must catch it.
+        // write, so all retained keys ended up missing from the saved file. The assertions below must catch it.
         ini.Delete("FrameGen", "External");
 
-        for (const auto* key : { "AmpereMfgUnlock", "AmpereMfgMaxFrames", "AmpereMfgKernelImage",
-                                 "AmpereMfgHardwareBilinear" })
+        for (const auto* key : { "AmpereMfgUnlock", "AmpereMfgMaxFrames", "AmpereMfgKernelImage" })
             ini.Delete("DLSSG", key);
     }
 
     const auto produced = SaveProduced(id, true);
     const auto row = RecordProduced(id, fixture, produced);
 
-    Check(id, "produced keeps all five keys", "true|true|4|PTX|true", ProducedValues(produced));
+    Check(id, "produced keeps all four keys", "true|true|4|PTX", ProducedValues(produced));
 
     Check(id, "no key lost or gained", DescribeKeys(KeySet(fixture)), DescribeKeys(KeySet(produced)));
     Check(id, "no line added or removed", "none",
@@ -555,17 +549,15 @@ bool CaseShippedIni(const fs::path& shipped)
     Check(id, "[DLSSG] AmpereMfgUnlock", "false", ValueIn(shipped, "DLSSG", "AmpereMfgUnlock"));
     Check(id, "[DLSSG] AmpereMfgMaxFrames", "3", ValueIn(shipped, "DLSSG", "AmpereMfgMaxFrames"));
     Check(id, "[DLSSG] AmpereMfgKernelImage", "auto", ValueIn(shipped, "DLSSG", "AmpereMfgKernelImage"));
-    Check(id, "[DLSSG] AmpereMfgHardwareBilinear", "false", ValueIn(shipped, "DLSSG", "AmpereMfgHardwareBilinear"));
     Check(id, "no key reads back as missing", "true",
           BoolText(ValueIn(shipped, "FrameGen", "External") != missing &&
                    ValueIn(shipped, "DLSSG", "AmpereMfgUnlock") != missing &&
                    ValueIn(shipped, "DLSSG", "AmpereMfgMaxFrames") != missing &&
-                   ValueIn(shipped, "DLSSG", "AmpereMfgKernelImage") != missing &&
-                   ValueIn(shipped, "DLSSG", "AmpereMfgHardwareBilinear") != missing));
+                   ValueIn(shipped, "DLSSG", "AmpereMfgKernelImage") != missing));
 
     // The shipped defaults must load into the documented configuration.
     LoadFixture(shipped);
-    Check(id, "shipped defaults load as (External|unlock|frames|kernel|bilinear)", "false|false|3|auto|false",
+    Check(id, "shipped defaults load as (External|unlock|frames|kernel)", "false|false|3|auto",
           LoadedValues());
 
     // Saving the shipped INI must leave every Ada key and the key set untouched.
@@ -589,8 +581,7 @@ bool CaseShippedIni(const fs::path& shipped)
                                                 "FrameGen/External",
                                                 "DLSSG/AmpereMfgUnlock",
                                                 "DLSSG/AmpereMfgMaxFrames",
-                                                "DLSSG/AmpereMfgKernelImage",
-                                                "DLSSG/AmpereMfgHardwareBilinear" };
+                                                "DLSSG/AmpereMfgKernelImage" };
 
     auto OutsideSurface = [&configSurface](std::set<std::string> pairs)
     {
@@ -612,8 +603,8 @@ bool CaseShippedIni(const fs::path& shipped)
 
     // The normalising save (the same convention as every other optional key) must still read back as 3.
     LoadFixture(produced);
-    Check(id, "saved values reload as (External|unlock|frames|kernel|bilinear)",
-          "false|false|3|auto|false", LoadedValues());
+    Check(id, "saved values reload as (External|unlock|frames|kernel)",
+          "false|false|3|auto", LoadedValues());
     return g_fails == before;
 }
 

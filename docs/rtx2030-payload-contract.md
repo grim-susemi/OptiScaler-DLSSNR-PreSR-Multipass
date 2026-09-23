@@ -85,9 +85,11 @@ Sections are added by the writer when absent; a wrong value costs only that key
 
 Also present in the factory INI: `[General] Enabled=1`, `[Compatibility] Preset=Auto`,
 `[Logging] Level=1`, `[Logging] Directory=dlssg_sm86\logs`, `[Runtime] CacheDirectory=`.
-Other supported-but-omitted keys (diagnostics/diagnostics-only, e.g. `KernelImage`, `SM75Family`,
-`SpoofArchToGame`, `SpoofArchValue`, `HardwareBilinear`, `SkipRepeatedRealCopy`, `ImagePatches`) take safe
-defaults and are not written by our loader.
+Other supported-but-omitted keys (diagnostics/diagnostics-only, e.g. `SM75Family`,
+`SpoofArchToGame`, `SpoofArchValue`, `SkipRepeatedRealCopy`, `ImagePatches`) take safe
+defaults and are not written by our loader. `KernelImage` is written only for a PTX/Cubin override.
+`HardwareBilinear` is forced off by the pinned 310.9 payload (upstream `docs/INSTALL.en.md`,
+"Advanced / diagnostic keys"); OptiScaler therefore does not expose or save that control.
 
 ## Machine signals (acceptance-relevant, C5)
 

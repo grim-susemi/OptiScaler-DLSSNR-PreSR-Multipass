@@ -6,7 +6,7 @@ REM                         read/save statements out of OptiScaler\Config.h / Co
 REM                         (tools\extract_mfg_config_seam.py fails when an anchor moves), compiles
 REM                         tests\ampere_mfg_config_smoke.cpp around them with the real SimpleIni, then runs the
 REM                         cases a) round trip incl. External=true, b) the 1..5 clamp on AmpereMfgMaxFrames,
-REM                         c) the "value || ampereUnlock" rule, d) a save after a load strips none of the five
+REM                         c) the "value || ampereUnlock" rule, d) a save after a load strips none of the four
 REM                         keys, e) the shipped OptiScaler.ini. The last step is the designed failure fixture:
 REM                         the v0.8.7 removal list applied by hand must make the strip assertions fail (exit 3).
 REM   suite --eligibility    (todo 5) the eligibility/ownership matrix: it compiles the PRODUCTION
@@ -162,6 +162,9 @@ if not exist "%OUT%\stub" mkdir "%OUT%\stub"
 if not exist "%OUT%\arm" mkdir "%OUT%\arm"
 if not exist "%SCRATCH%" mkdir "%SCRATCH%"
 
+python tools\extract_mfg_config_seam.py --config "OptiScaler\Config.cpp" --header "OptiScaler\Config.h" --out-dir "%OUT%" --evidence "%E%\seam-extraction.json"
+if errorlevel 1 exit /b 1
+
 call "%VCVARS%" >nul
 echo === cl.exe availability
 where cl
@@ -178,7 +181,7 @@ if not exist "%STUB%" (echo MISSING "%STUB%" & exit /b 1)
 cd /d "%OUT%"
 if exist "%EXE%" del /Q "%EXE%"
 echo === cl /nologo /std:c++latest /EHsc /MD /O2 /W4 /DUNICODE /D_UNICODE /DOPTISCALER_RTX40_MFG /I "%SEAMS%" /I "%LOADER_DIR%" /I "%W%\external\nvapi" tests\ampere_mfg_eligibility_smoke.cpp dxgi.lib
-cl /nologo /std:c++latest /EHsc /MD /O2 /W4 /DUNICODE /D_UNICODE /DOPTISCALER_RTX40_MFG /I "%SEAMS%" /I "%LOADER_DIR%" /I "%W%\external\nvapi" "%W%\tests\ampere_mfg_eligibility_smoke.cpp" dxgi.lib /Fe:"%EXE%" /Fo:"%OUT%\ampere_mfg_eligibility_smoke.obj"
+cl /nologo /std:c++latest /EHsc /MD /O2 /W4 /DUNICODE /D_UNICODE /DOPTISCALER_RTX40_MFG /I "%OUT%" /I "%SEAMS%" /I "%LOADER_DIR%" /I "%W%\external\nvapi" "%W%\tests\ampere_mfg_eligibility_smoke.cpp" dxgi.lib /Fe:"%EXE%" /Fo:"%OUT%\ampere_mfg_eligibility_smoke.obj"
 set "COMPILE=%ERRORLEVEL%"
 echo compile-exit=%COMPILE%
 if not "%COMPILE%"=="0" (echo eligibility smoke compile failed & exit /b 1)

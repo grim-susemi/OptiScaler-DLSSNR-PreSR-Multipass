@@ -549,9 +549,8 @@ std::vector<Case> Cases()
               "another unlocker or frame-generation owner is already present: the payload module is loaded "
               "without this loader having loaded it");
     addMatrix("co3", "External off while the payload needs game-Streamline ownership", { sm86 }, "Conflict",
-              "External frame generation is off ([FrameGen] External=false) while the payload needs the game's "
-              "Streamline to own frame generation; the setting is left as it is (a restart after enabling it is "
-              "required)");
+              "External frame generation does not own this session; enable [FrameGen] External and restart "
+              "with no active OptiScaler FG selections so the game's Streamline owns frame generation");
     addMatrix("co4", "OptiScaler-owned DLSSG output active", { sm86 }, "Conflict",
               "OptiScaler's own DLSSG output path is active; it owns the generated frames for this session");
 
@@ -753,8 +752,76 @@ void ApplyFacts(const Case& c)
     MfgUnlock::g_enabledForSession = c.adaUnlock;
 
     auto& state = State::Instance();
+    state.activeFgInput = FGInput::NoFG;
     state.activeFgOutput = c.optiFgOutput ? FGOutput::DLSSG : FGOutput::NoFG;
-    state.activeFgNvngx = c.optiFgOutput ? FGNvngxReplacement::Nukems : FGNvngxReplacement::None;
+    // A native DLSSG output conflicts even with no nvngx replacement (B2).
+    state.activeFgNvngx = FGNvngxReplacement::None;
+}
+
+void ApplyStartupSelections()
+{
+#include "production-fg-startup.inc"
+}
+
+// Compile the real hook's ownership suppression block, not a copy of its condition.
+namespace sl
+{
+enum class DLSSGMode { eOff, eOn };
+}
+
+sl::DLSSGMode ForwardGameMode()
+{
+    auto& state = State::Instance();
+    struct { sl::DLSSGMode mode; } newOptions { sl::DLSSGMode::eOn };
+    const int viewport = 0;
+    const auto o_slDLSSGSetOptions = [](int, const auto& options) { return options.mode; };
+#include "production-fg-suppression.inc"
+    return newOptions.mode;
+}
+
+std::string BoolText(bool value) { return value ? "true" : "false"; }
+
+void CheckStartupOwnership()
+{
+    auto* config = Config::Instance();
+    auto& state = State::Instance();
+    for (bool external : { false, true })
+    {
+        for (auto input : { FGInput::Upscaler, FGInput::DLSSG, FGInput::NvngxFG })
+        {
+            config->ExternalFrameGeneration.stored = external;
+            config->FGInput.stored = input;
+            config->FGOutput.stored = FGOutput::DLSSG;
+            config->FGNvngxReplacement.stored = FGNvngxReplacement::Nukems;
+            ApplyStartupSelections();
+            const auto expectedOutput = external || input == FGInput::NvngxFG ? FGOutput::NoFG : FGOutput::DLSSG;
+            Check("startup", "active input", "true", BoolText(state.activeFgInput == (external ? FGInput::NoFG : input)));
+            Check("startup", "active output", "true", BoolText(state.activeFgOutput == expectedOutput));
+            Check("startup", "active replacement", "true", BoolText(state.activeFgNvngx ==
+                  (external ? FGNvngxReplacement::None : FGNvngxReplacement::Nukems)));
+            Check("startup", "host ownership", BoolText(external),
+                  BoolText(AmpereMfgLoader::HostOwnershipFacts().ExternalFrameGeneration));
+            const bool suppress = !external && input == FGInput::Upscaler;
+            Check("startup", "game mode forwarded", BoolText(!suppress),
+                  BoolText(ForwardGameMode() == sl::DLSSGMode::eOn));
+        }
+    }
+
+    // Turning the stored flag on mid-session cannot grant ownership while any selection remains active.
+    config->ExternalFrameGeneration.stored = true;
+    for (int selection = 0; selection < 3; ++selection)
+    {
+        state.activeFgInput = selection == 0 ? FGInput::DLSSG : FGInput::NoFG;
+        state.activeFgOutput = selection == 1 ? FGOutput::FSRFG : FGOutput::NoFG;
+        state.activeFgNvngx = selection == 2 ? FGNvngxReplacement::Nukems : FGNvngxReplacement::None;
+        Check("startup", "stored flag cannot grant ownership", "false",
+              BoolText(AmpereMfgLoader::HostOwnershipFacts().ExternalFrameGeneration));
+    }
+    ApplyStartupSelections();
+    config->ExternalFrameGeneration.stored = false;
+    Check("startup", "menu change does not adopt selections", "true",
+          BoolText(state.activeFgInput == FGInput::NoFG && state.activeFgOutput == FGOutput::NoFG &&
+                   state.activeFgNvngx == FGNvngxReplacement::None));
 }
 
 // ---------------------------------------------------------------------------
@@ -1012,6 +1079,7 @@ int main(int argc, char** argv)
     fs::create_directories(g_scratch, error);
 
     const auto cases = Cases();
+    CheckStartupOwnership();
 
     // ------------------------------------------------------------------
     // 1. The matrix: the gate with fixture facts, and the load counter

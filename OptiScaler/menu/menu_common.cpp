@@ -3450,14 +3450,6 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                            "PTX: driver-compiled path; the safe choice for RTX 20 and Linux/Proton.\n"
                            "Cubin: precompiled binary; needs an exact physical match on Windows.\n"
                            "Save Settings and restart to apply.");
-
-            bool hardwareBilinear = config->FGDLSSGAmpereMfgHardwareBilinear.value_or_default();
-
-            if (ImGui::Checkbox("Hardware Bilinear (approximate sampling)##sm86", &hardwareBilinear))
-                config->FGDLSSGAmpereMfgHardwareBilinear = hardwareBilinear;
-            ShowHelpMarker("RTX 30 (SM86) only. Off = exact output (the factory default); On = approximate\n"
-                           "hardware bilinear sampling for about 2-4% lower GPU latency.\n"
-                           "Saved to [DLSSG] AmpereMfgHardwareBilinear. Save Settings and restart to apply.");
         }
 
         ImGui::Unindent();

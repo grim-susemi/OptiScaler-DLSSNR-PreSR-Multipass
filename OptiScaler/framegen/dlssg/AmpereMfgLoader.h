@@ -428,7 +428,7 @@ inline constexpr const char* kSupportedPartsText = "SM75 (RTX 20) or SM86 (RTX 3
 // process by Arm(), or handed in by a fixture.
 struct OwnershipFacts
 {
-    bool ExternalFrameGeneration = false;    // [FrameGen] External, restart-latched
+    bool ExternalFrameGeneration = false;    // External enabled and no active OptiScaler FG selections
     bool AdaUnlockActive = false;            // the RTX 40 (Ada) unlock is on for this session
     bool OtherOwnerPresent = false;          // another unlocker already holds the DLSSG output
     bool OptiScalerOwnedDlssgOutput = false; // OptiScaler's own DLSSG output path is active
@@ -533,15 +533,14 @@ inline Decision Evaluate(const ArmOptions& options, const AdapterFacts& adapter,
                  "another unlocker or frame-generation owner is already present: the payload module is loaded "
                  "without this loader having loaded it" };
 
-    if (kPayloadRequiresGameStreamlineOwnership && !ownership.ExternalFrameGeneration)
-        return { Verdict::Conflict,
-                 "External frame generation is off ([FrameGen] External=false) while the payload needs the "
-                 "game's Streamline to own frame generation; the setting is left as it is (a restart after "
-                 "enabling it is required)" };
-
     if (ownership.OptiScalerOwnedDlssgOutput)
         return { Verdict::Conflict,
                  "OptiScaler's own DLSSG output path is active; it owns the generated frames for this session" };
+
+    if (kPayloadRequiresGameStreamlineOwnership && !ownership.ExternalFrameGeneration)
+        return { Verdict::Conflict,
+                 "External frame generation does not own this session; enable [FrameGen] External and restart "
+                 "with no active OptiScaler FG selections so the game's Streamline owns frame generation" };
 
     return { Verdict::Eligible, AdapterText(adapter) + " is " + PhysicalClassName(part) +
                                     "; External frame generation is on and no other owner holds the DLSSG "

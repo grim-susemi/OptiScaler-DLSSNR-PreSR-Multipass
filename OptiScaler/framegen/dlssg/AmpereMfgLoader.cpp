@@ -99,7 +99,10 @@ OwnershipFacts HostOwnershipFacts()
     OwnershipFacts ownership;
     auto* config = ::Config::Instance();
 
-    ownership.ExternalFrameGeneration = config->ExternalFrameGeneration.value_or_default();
+    const auto& state = ::State::Instance();
+    ownership.ExternalFrameGeneration =
+        config->ExternalFrameGeneration.value_or_default() && state.activeFgInput == ::FGInput::NoFG &&
+        state.activeFgOutput == ::FGOutput::NoFG && state.activeFgNvngx == ::FGNvngxReplacement::None;
 
     // "Active" is the session-latched Ada unlock being on, read the same way MfgUnlock::EnabledForSession
     // reads it. It is a conflict because the DLSSG output has exactly one owner and the Ada route is the other
@@ -114,10 +117,8 @@ OwnershipFacts HostOwnershipFacts()
     // it owns the DLSSG output.
     ownership.OtherOwnerPresent = GetModuleHandleW(kPayloadModuleName) != nullptr;
 
-    // State is qualified: this namespace has a State of its own (the loader's pipeline states).
-    const auto& state = ::State::Instance();
-    ownership.OptiScalerOwnedDlssgOutput =
-        state.activeFgOutput == ::FGOutput::DLSSG && state.activeFgNvngx != ::FGNvngxReplacement::None;
+    // A native DLSSG output owns the route even without an nvngx replacement.
+    ownership.OptiScalerOwnedDlssgOutput = state.activeFgOutput == ::FGOutput::DLSSG;
 
     return ownership;
 }
@@ -134,8 +135,7 @@ ArmOptions HostOptions()
     options.Ini.KernelImage = config->FGDLSSGAmpereMfgKernelImage.value_for_config_or("Auto");
 
     // Router/Optimized/Mode/LogLevel keep the loader's defaults: 0.3.5 resolves the kernel family from the
-    // physical GPU itself, and [DLSSG] AmpereMfgHardwareBilinear is the payload's own INI key, which this loader
-    // deliberately does not write. PackageRoot stays empty in production - the OptiScaler.dll directory.
+    // physical GPU itself. PackageRoot stays empty in production - the OptiScaler.dll directory.
     return options;
 }
 

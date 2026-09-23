@@ -68,8 +68,40 @@ struct MockNoDefaultString
     }
 };
 
+enum class FGInput : uint32_t
+{
+    NoFG,
+    Upscaler,
+    DLSSG,
+    NvngxFG,
+};
+
+enum class FGOutput : uint32_t
+{
+    NoFG,
+    FSRFG,
+    DLSSG,
+    XeFG,
+};
+
+enum class FGNvngxReplacement : uint32_t
+{
+    None,
+    Nukems,
+    Arturs,
+};
+
+template <typename T> struct MockSelection
+{
+    T stored {};
+    T value_or_default() const { return stored; }
+};
+
 struct Config
 {
+    MockSelection<::FGInput> FGInput;
+    MockSelection<::FGOutput> FGOutput;
+    MockSelection<::FGNvngxReplacement> FGNvngxReplacement;
     MockBool ExternalFrameGeneration;
     MockBool FGDLSSGAmpereMfgUnlock;
     MockInt FGDLSSGAmpereMfgMaxFrames;
@@ -94,24 +126,10 @@ inline bool EnabledForSession()
 } // namespace MfgUnlock
 
 // State.h
-enum class FGOutput : uint32_t
-{
-    NoFG,
-    FSRFG,
-    DLSSG,
-    XeFG,
-};
-
-enum class FGNvngxReplacement : uint32_t
-{
-    None,
-    Nukems,
-    Arturs,
-};
-
 class State
 {
   public:
+    FGInput activeFgInput = FGInput::NoFG;
     FGOutput activeFgOutput = FGOutput::NoFG;
     FGNvngxReplacement activeFgNvngx = FGNvngxReplacement::None;
 

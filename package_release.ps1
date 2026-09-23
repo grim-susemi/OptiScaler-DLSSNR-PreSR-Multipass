@@ -4,19 +4,13 @@ param(
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]*$')]
     [string]$Version = 'nr-dev',
     [switch]$SkipBuild,
-    [switch]$EnableRtx40Mfg,
-    [switch]$IncludeAmpereMfg,
-    [switch]$AcceptAmpereMfgLicenses
+    [switch]$EnableRtx40Mfg
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSCommandPath
-if ($IncludeAmpereMfg -and -not $AcceptAmpereMfgLicenses) {
-    throw 'Bundling the pinned RTX 20/30 MFG payload requires -AcceptAmpereMfgLicenses. Review vendor/dlssg_sm86/THIRD_PARTY_NOTICES.txt and docs/rtx2030-payload-contract.md first.'
-}
-$flavour = if ($IncludeAmpereMfg) { '-with-sm86-mfg' } else { '' }
-$stage = Join-Path $root "release/$Version$flavour"
-$zip = Join-Path $root "release/OptiScaler-NR-$Version$flavour.zip"
+$stage = Join-Path $root "release/$Version"
+$zip = Join-Path $root "release/OptiScaler-NR-$Version.zip"
 if ((Test-Path -LiteralPath $stage) -or (Test-Path -LiteralPath $zip)) {
     throw 'Release output already exists. Choose a new -Version; existing packages are not overwritten.'
 }
@@ -64,22 +58,6 @@ $files['Licenses/FidelityFX_v1_LICENSE.md'] = Join-Path $root 'external/Fidelity
 $files['Licenses/FidelityFX_v2_LICENSE.md'] = Join-Path $root 'external/FidelityFX-SDK-v2/docs/license.md'
 $files['Licenses/DirectX_LICENSE.txt'] = Join-Path $root 'external/directx_agility_sdk/LICENSE.txt'
 $files['Licenses/RenoDX_ATTRIBUTION.txt'] = Join-Path $root 'Licenses/RenoDX_ATTRIBUTION.txt'
-if ($EnableRtx40Mfg) {
-    $files['Licenses/MFGUnlock_LICENSE.txt'] = Join-Path $root 'Licenses/MFGUnlock_LICENSE.txt'
-}
-if ($IncludeAmpereMfg) {
-    $pinPath = Join-Path $root 'vendor/dlssg_sm86/PIN.json'
-    if (-not (Test-Path -LiteralPath $pinPath)) { throw "Payload pin is missing: $pinPath" }
-    $bundledName = (Get-Content -LiteralPath $pinPath -Raw | ConvertFrom-Json).bundled_name
-    if (-not $bundledName -or $bundledName -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
-        throw "The payload pin has an invalid bundled_name: '$bundledName'"
-    }
-    $sm86 = Join-Path $root 'vendor/dlssg_sm86'
-    $files["OptiScaler/dlssg_sm86/$bundledName"] = Join-Path $sm86 'dlssg_sm86.dll'
-    $files['OptiScaler/dlssg_sm86/dlssg_sm86.ini'] = Join-Path $sm86 'dlssg_sm86.ini'
-    $files['OptiScaler/dlssg_sm86/THIRD_PARTY_NOTICES.txt'] = Join-Path $sm86 'THIRD_PARTY_NOTICES.txt'
-    $files['Licenses/DLSSG_SM86_THIRD_PARTY_NOTICES.txt'] = Join-Path $sm86 'THIRD_PARTY_NOTICES.txt'
-}
 foreach ($name in @('CREDITS.md', 'NR-COMPATIBILITY.md', 'NR-MOTION-METADATA.md', 'NR-PIPELINE-UI.md', 'NR-FINISHED-BRIDGES.md', 'PADDED-PRESR.md',
                     'DEFERRED-NR-DLSS.md', 'RESIDUAL-ACROSS-RR.md', 'COMPATIBILITY-CHANGES.md',
                     'NR-DLSS-ENLARGEMENT.md', 'NR-GPU-RETIREMENT.md', 'NR-NATIVE-STREAMLINE-PRESENT.md',
@@ -95,7 +73,7 @@ foreach ($entry in $files.GetEnumerator()) {
 
 $ini = Get-Content -LiteralPath $files['OptiScaler.ini'] -Raw
 if ($ini -match '(?mi)^Enabled=true\s*$') { throw 'A feature is enabled in the default INI.' }
-foreach ($key in @('FinishedPicture', 'DeferredDLSS', 'UnlockPasses', 'AdaMfgUnlock', 'AdaFlipMeteringPatch', 'AmpereMfgUnlock')) {
+foreach ($key in @('FinishedPicture', 'DeferredDLSS', 'UnlockPasses', 'AdaMfgUnlock')) {
     if ($ini -match "(?mi)^$key=true\s*$") { throw "Experimental option $key is enabled in the default INI." }
 }
 if ($ini -notmatch '(?mi)^TargetProcessName=auto\s*$') { throw 'The INI contains a game-specific process filter.' }
@@ -109,7 +87,6 @@ foreach ($entry in $files.GetEnumerator()) {
 if (-not $EnableRtx40Mfg) {
     $ini = $ini -replace '(?m)^; Experimental built-in RTX 40 MFG unlock[^\r\n]*\r?\n', ''
     $ini = $ini -replace '(?m)^AdaMfgUnlock=[^\r\n]*\r?\n', ''
-    $ini = $ini -replace '(?ms)^; Frame timing fix for the extra frames.*?^AdaFlipMeteringPatch=[^\r\n]*\r?\n', ''
     [IO.File]::WriteAllText((Join-Path $stage 'OptiScaler.ini'), $ini, [Text.UTF8Encoding]::new($false))
 }
 [IO.File]::WriteAllText((Join-Path $stage '!! EXTRACT ALL FILES TO GAME FOLDER !!'), '')

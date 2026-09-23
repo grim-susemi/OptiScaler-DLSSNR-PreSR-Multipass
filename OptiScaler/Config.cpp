@@ -90,8 +90,6 @@ bool Config::Reload(std::filesystem::path iniPath)
                     FGDLSSGAmpereMfgKernelImage.set_from_config("Auto");
             }
 
-            FGDLSSGAmpereMfgHardwareBilinear.set_from_config(readBool("DLSSG", "AmpereMfgHardwareBilinear"));
-
             // The unlock needs the game's own Streamline FG to own frame generation, so enabling it turns
             // External FG mode on too; the save side keeps the two consistent (value || ampereUnlock).
             if (FGDLSSGAmpereMfgUnlock.value_or_default())
@@ -1027,8 +1025,6 @@ bool Config::SaveIni()
                      GetIntValue(Instance()->FGDLSSGAmpereMfgMaxFrames.value_for_config()).c_str());
         ini.SetValue("DLSSG", "AmpereMfgKernelImage",
                      Instance()->FGDLSSGAmpereMfgKernelImage.value_for_config_or("auto").c_str());
-        ini.SetValue("DLSSG", "AmpereMfgHardwareBilinear",
-                     GetBoolValue(Instance()->FGDLSSGAmpereMfgHardwareBilinear.value_for_config()).c_str());
         ini.SetValue("FrameGen", "DebugView", GetBoolValue(Instance()->FGDebugView.value_for_config()).c_str());
         std::string FGInputString = "auto";
         if (auto FGInputHeld = Instance()->FGInput.value_for_config(); FGInputHeld.has_value())

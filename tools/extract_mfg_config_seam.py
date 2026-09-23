@@ -6,15 +6,15 @@ declarations instead of a copy that can drift, so this tool extracts them verbat
 
   production-config-customoptional.inc  HasDefaultValue + CustomOptional, verbatim from Config.h
   production-config-fgenabled.inc       the FGEnabled declaration, verbatim from Config.h
-  production-ampere-fields.inc          the five new declarations ([FrameGen] External + the four Ampere keys)
+  production-ampere-fields.inc          the four declarations ([FrameGen] External + the three Ampere keys)
   production-config-values.inc          GetBoolValue / GetIntValue, verbatim from Config.cpp
   production-config-read.inc            Config::readString / readInt / readBool, verbatim from Config.cpp
   production-ampere-read.inc            the [FrameGen] External + [DLSSG] AmpereMfg* read statements
   production-ampere-save.inc            the [FrameGen] External + [DLSSG] AmpereMfg* save statements, including
                                         whatever removal statement still shares that block
 
-Every extraction is anchored on exact production text and fails when an anchor moves or disappears, so a
-renamed key or a moved statement breaks this tool instead of silently weakening the suite.
+Region anchors match exact C++ tokens with formatting whitespace ignored; extracted text stays verbatim.
+Missing or duplicate anchors and changed keys fail instead of silently weakening the suite.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ import argparse
 import hashlib
 import json
 import pathlib
+import re
 import sys
 
 CUSTOMOPTIONAL_SIGNATURE = (
@@ -32,13 +33,12 @@ ENUM_SIGNATURE = "enum HasDefaultValue"
 
 FGENABLED_LINE = "CustomOptional<bool> FGEnabled { false };"
 FIELDS_START = "CustomOptional<bool> ExternalFrameGeneration { false };"
-FIELDS_END = "CustomOptional<bool> FGDLSSGAmpereMfgHardwareBilinear { false };"
+FIELDS_END = "CustomOptional<std::string, NoDefault> FGDLSSGAmpereMfgKernelImage;"
 FIELDS_REQUIRED = (
     "ExternalFrameGeneration",
     "FGDLSSGAmpereMfgUnlock",
     "FGDLSSGAmpereMfgMaxFrames",
     "FGDLSSGAmpereMfgKernelImage",
-    "FGDLSSGAmpereMfgHardwareBilinear",
 )
 FIELDS_FORBIDDEN = ("FGDLSSGAda",)
 
@@ -60,20 +60,18 @@ READ_REQUIRED = (
     '"DLSSG", "AmpereMfgUnlock"',
     '"DLSSG", "AmpereMfgMaxFrames"',
     '"DLSSG", "AmpereMfgKernelImage"',
-    '"DLSSG", "AmpereMfgHardwareBilinear"',
 )
 
 SAVE_START = "bool ampereUnlock = Instance()->FGDLSSGAmpereMfgUnlock.value_for_config_or(false);"
 SAVE_END = (
-    'ini.SetValue("DLSSG", "AmpereMfgHardwareBilinear", '
-    "GetBoolValue(Instance()->FGDLSSGAmpereMfgHardwareBilinear.value_for_config()).c_str());"
+    'ini.SetValue("DLSSG", "AmpereMfgKernelImage", '
+    'Instance()->FGDLSSGAmpereMfgKernelImage.value_for_config_or("auto").c_str());'
 )
 SAVE_REQUIRED = (
     'ini.SetValue("FrameGen", "External"',
     'ini.SetValue("DLSSG", "AmpereMfgUnlock"',
     'ini.SetValue("DLSSG", "AmpereMfgMaxFrames"',
     'ini.SetValue("DLSSG", "AmpereMfgKernelImage"',
-    'ini.SetValue("DLSSG", "AmpereMfgHardwareBilinear"',
     "ampereUnlock",
 )
 
@@ -188,6 +186,11 @@ def extract_line(source: str, marker: str, path: str, required: str = "") -> str
     return line
 
 
+def marker_pattern(marker: str) -> str:
+    """Match the same C++ tokens regardless of formatting whitespace."""
+    return r"\s*".join(re.escape(token) for token in re.findall(r"\w+|[^\w\s]", marker))
+
+
 def extract_region(
     source: str,
     start_marker: str,
@@ -197,21 +200,24 @@ def extract_region(
     forbidden: tuple[str, ...] = (),
 ) -> str:
     """Return the verbatim lines from the line holding `start_marker` through the line holding `end_marker`."""
+    anchors = []
     for label, marker in (("start", start_marker), ("end", end_marker)):
-        hits = source.count(marker)
-        if hits != 1:
-            raise SystemExit(f"{label} anchor must appear exactly once in {path}: {marker} (found {hits})")
+        hits = list(re.finditer(marker_pattern(marker), source))
+        if len(hits) != 1:
+            raise SystemExit(f"{label} anchor must appear exactly once in {path}: {marker} (found {len(hits)})")
+        anchors.append(hits[0])
 
-    start = source.rfind("\n", 0, source.index(start_marker)) + 1
-    end = source.find("\n", source.index(end_marker))
+    first, last = anchors
+    start = source.rfind("\n", 0, first.start()) + 1
+    end = source.find("\n", last.end())
     if end < 0:
         end = len(source)
     region = source[start:end]
 
-    if source.index(end_marker) < source.index(start_marker):
+    if last.start() < first.start():
         raise SystemExit(f"end anchor precedes the start anchor in {path}: {end_marker}")
     for needle in required:
-        if needle not in region:
+        if not re.search(marker_pattern(needle), region):
             raise SystemExit(f"region is missing {needle!r} in {path}")
     for needle in forbidden:
         if needle in region:
@@ -268,7 +274,7 @@ def main() -> int:
         "production-ampere-fields.inc",
         header_path,
         fields,
-        "[FrameGen] External and the four [DLSSG] AmpereMfg* declarations, contiguous in Config.h.",
+        "[FrameGen] External and the three [DLSSG] AmpereMfg* declarations, contiguous in Config.h.",
     )
 
     values = "\n\n".join(
@@ -304,12 +310,36 @@ def main() -> int:
         "is inside the compiled region and the smoke can see its effect on the produced INI.",
     )
 
+    startup_path = config_path.with_name("dllmain.cpp")
+    startup_source = startup_path.read_text(encoding="utf-8")
+    startup = extract_region(
+        startup_source,
+        "const bool externalFg = Config::Instance()->ExternalFrameGeneration.value_or_default();",
+        "State::Instance().activeFgOutput = FGOutput::NoFG;",
+        startup_path.as_posix(),
+        ("activeFgInput", "activeFgOutput", "activeFgNvngx"),
+    )
+    emit(out_dir, "production-fg-startup.inc", startup_path, startup)
+    extracted["dllmain.cpp::fg-startup"] = startup
+
+    hook_path = config_path.parent / "hooks" / "Streamline_Hooks.cpp"
+    hook_source = hook_path.read_text(encoding="utf-8")
+    suppression = extract_definition(
+        hook_source,
+        "if (state.activeFgInput != FGInput::DLSSG && state.activeFgOutput == FGOutput::DLSSG)",
+        hook_path.as_posix(),
+    )
+    emit(out_dir, "production-fg-suppression.inc", hook_path, suppression)
+    extracted["Streamline_Hooks.cpp::fg-suppression"] = suppression
+
     receipt = {
         "tool": "tools/extract_mfg_config_seam.py",
         "schema": 1,
         "sources": {
             config_path.as_posix(): sha256_text(config_source),
             header_path.as_posix(): sha256_text(header_source),
+            startup_path.as_posix(): sha256_text(startup_source),
+            hook_path.as_posix(): sha256_text(hook_source),
         },
         "extracted": {
             name: {"sha256": sha256_text(text), "lines": text.count("\n") + 1} for name, text in extracted.items()

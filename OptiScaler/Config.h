@@ -874,7 +874,6 @@ class Config
     CustomOptional<bool> FGDLSSGAmpereMfgUnlock { false };
     CustomOptional<int> FGDLSSGAmpereMfgMaxFrames { 3 }; // 1..5: 1=2X, 2=3X, 3=4X, 4=5X, 5=6X; clamped on load
     CustomOptional<std::string, NoDefault> FGDLSSGAmpereMfgKernelImage; // Auto / PTX / Cubin
-    CustomOptional<bool> FGDLSSGAmpereMfgHardwareBilinear { false };    // Optional approximate sampling (SM86 only)
 #if defined(OPTISCALER_RTX40_MFG)
     CustomOptional<bool> FGDLSSGAdaMfgUnlock { false }; // RTX 40 only; restart required
     CustomOptional<std::string, NoDefault> FGDLSSGAdaTemporalFix; // Auto / Retarget / Ptx

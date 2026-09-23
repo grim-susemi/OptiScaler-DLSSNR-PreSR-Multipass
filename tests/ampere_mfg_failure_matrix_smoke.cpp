@@ -616,9 +616,8 @@ std::vector<Case> Cases()
     mk("c03-conflict-external-off", "External off while the payload needs game-Streamline ownership");
     cases.back().externalFg = false;
     cases.back().expectedStatus = "Conflict";
-    cases.back().expectedDetail = "External frame generation is off ([FrameGen] External=false) while the payload "
-                                  "needs the game's Streamline to own frame generation; the setting is left as it "
-                                  "is (a restart after enabling it is required)";
+    cases.back().expectedDetail = "External frame generation does not own this session; enable [FrameGen] External and restart "
+                                  "with no active OptiScaler FG selections so the game's Streamline owns frame generation";
 
     mk("c04-conflict-optiscaler-dlssg", "OptiScaler's own DLSSG output path is active");
     cases.back().optiFgOutput = true;

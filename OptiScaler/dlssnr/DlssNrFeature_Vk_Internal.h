@@ -100,7 +100,6 @@ struct VkState
     float timestampPeriod = 0.0f;
     unsigned long long timedFrames = 0;
     std::optional<double> lastGpuTime;
-
 };
 
 // Four frames of pairs. Three would do, four keeps the modulo cheap and the slot being written well
@@ -130,15 +129,16 @@ struct ModelVk::Impl
                            VkImageLayout to);
     bool InitDriver(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device);
     void ReleaseModels();
-    bool CreateModel(VkCommandBuffer commandBuffer, unsigned int passIndex, unsigned int width,
-                     unsigned int height, const Config& config);
-    NVSDK_NGX_Result EvaluateModel(VkCommandBuffer commandBuffer, unsigned int passIndex,
-                                  NVSDK_NGX_Resource_VK* colour, NVSDK_NGX_Resource_VK* depth,
-                                  NVSDK_NGX_Resource_VK* motion, NVSDK_NGX_Resource_VK* output,
-                                  unsigned int width, unsigned int height, const GuideRegions& guides,
-                                  bool depthInverted, float mvX, float mvY, const Config& config);
+    bool CreateModel(VkCommandBuffer commandBuffer, unsigned int passIndex, unsigned int width, unsigned int height,
+                     const Config& config);
+    NVSDK_NGX_Result EvaluateModel(VkCommandBuffer commandBuffer, unsigned int passIndex, NVSDK_NGX_Resource_VK* colour,
+                                   NVSDK_NGX_Resource_VK* depth, NVSDK_NGX_Resource_VK* motion,
+                                   NVSDK_NGX_Resource_VK* output, unsigned int width, unsigned int height,
+                                   const GuideRegions& guides, bool depthInverted, float mvX, float mvY,
+                                   const Config& config);
     bool FormatCanHoldLinearHdr(VkFormat format);
-    bool PrepareModels(VkCommandBuffer cmdBuffer, const DlssNrFrameInfo_Vk& frame, uint32_t width, uint32_t height, uint32_t workWidth, uint32_t workHeight, float workScale, unsigned int passes,
+    bool PrepareModels(VkCommandBuffer cmdBuffer, const DlssNrFrameInfo_Vk& frame, uint32_t width, uint32_t height,
+                       uint32_t workWidth, uint32_t workHeight, float workScale, unsigned int passes,
                        const Spatial::Layout& spatial);
     bool Evaluate(VkCommandBuffer cmdBuffer, const VkImageInfo& colourInfo, const VkImageInfo& depthInfo,
                   const VkImageInfo& motionInfo, const VkImageInfo& target, const DlssNrFrameInfo_Vk& frame,

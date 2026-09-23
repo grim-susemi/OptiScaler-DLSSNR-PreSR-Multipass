@@ -54,7 +54,8 @@ static void StoreSpatial(Config* config, const Spatial::Settings& value)
 static void ConstrainSpatialControls(Spatial::Settings& value, float scale)
 {
     const float minimumWork = Spatial::MinimumWorkPercent(scale);
-    auto axis = [&](float& center, float& work, float& offset) {
+    auto axis = [&](float& center, float& work, float& offset)
+    {
         center = std::clamp(std::isfinite(center) ? center : 80.0f, 1.0f, 99.5f);
         work = std::clamp(std::isfinite(work) ? work : 90.0f, std::max(minimumWork, center + 0.5f), 100.0f);
         const float limit = Spatial::MaxCenterOffset(center);
@@ -71,7 +72,8 @@ static void ConstrainSpatialControls(Spatial::Settings& value, float scale)
 static void RenderSpatial(Config* config)
 {
     Checkbox("Peripheral compression", config->DlssNrSpatialCompression);
-    HelpMarker("Keep more model detail in the centre and compress the edges. Model resolution still scales the whole image.");
+    HelpMarker(
+        "Keep more model detail in the centre and compress the edges. Model resolution still scales the whole image.");
     if (!config->DlssNrSpatialCompression.value_or_default())
         return;
 
@@ -88,7 +90,8 @@ static void RenderSpatial(Config* config)
     const float scale = config->DlssNrWorkingScale.value_or_default();
     ConstrainSpatialControls(pending, scale);
     bool commit = false;
-    auto slider = [&](const char* label, float& value, float lo, float hi) {
+    auto slider = [&](const char* label, float& value, float lo, float hi)
+    {
         if (ImGui::SliderFloat(label, &value, lo, hi, "%.1f%%"))
             editing = true;
         if (ImGui::IsItemDeactivatedAfterEdit())
@@ -107,7 +110,8 @@ static void RenderSpatial(Config* config)
     const auto yShift = Spatial::WorkShiftLimits(pending, true);
     slider("Working region horizontal shift", pending.shiftX, xShift.first, xShift.second);
     slider("Working region vertical shift", pending.shiftY, yShift.first, yShift.second);
-    HelpMarker("Extreme shifts can leave an edge with less than one working pixel. Compression then falls back to ordinary NR; the status above explains why.");
+    HelpMarker("Extreme shifts can leave an edge with less than one working pixel. Compression then falls back to "
+               "ordinary NR; the status above explains why.");
     if (ImGui::SmallButton("Reset compression layout"))
     {
         pending = Spatial::Settings {};
@@ -121,7 +125,8 @@ static void RenderSpatial(Config* config)
     }
     Checkbox("Show centre outline", config->DlssNrSpatialShowCenter);
     Checkbox("Show working region outline", config->DlssNrSpatialShowWork);
-    ImGui::TextWrapped("Centre detail follows Model resolution. Strong edge compression can soften detail or shimmer during movement.");
+    ImGui::TextWrapped("Centre detail follows Model resolution. Strong edge compression can soften detail or shimmer "
+                       "during movement.");
 }
 
 void RenderInput(Config* config)
@@ -169,7 +174,7 @@ void RenderInput(Config* config)
         ImGui::BeginDisabled(!reduced);
 
         static const char* enlargeNames[] = { "Classic", "Matched residual", "Matched residual + DLSS",
-                                             "Lighting + colour", "Lighting + colour + DLSS" };
+                                              "Lighting + colour", "Lighting + colour + DLSS" };
         int enlarge = (int) std::min(config->DlssNrTransfer.value_or_default(), 4u);
 
         if (ImGui::Combo("Enlargement", &enlarge, enlargeNames, IM_ARRAYSIZE(enlargeNames)))
@@ -351,7 +356,8 @@ void RenderBlend(Config* config)
                              (feature && feature->GetUpscalerType() == Upscaler::DLSSD));
         Checkbox("Match HDR brightness response (experimental)", config->DlssNrHdrTransfer);
         ImGui::EndDisabled();
-        HelpMarker("Match early NR brightness changes to the finished HDR image. Adds GPU work; unreliable fits fall back.");
+        HelpMarker(
+            "Match early NR brightness changes to the finished HDR image. Adds GPU work; unreliable fits fall back.");
     }
     Slider("Detail strength", config->DlssNrTransferStrength, 0.0f, 2.0f, "%.2f", 1.0f);
     HelpMarker("0 = no detail change. 1 = normal.");
@@ -390,7 +396,8 @@ void RenderInspect(Config* config)
                                config->DlssNrShowSkinMask.value_or_default()))
         ImGui::TextWrapped("Compare, debug view and skin-mask inspection suspend the separate edit-upscale path.");
     Checkbox("Hold frame", config->DlssNrHoldFrame);
-    HelpMarker("Freeze a frame for NR tuning. Later game effects may update; temporal behaviour is not representative.");
+    HelpMarker(
+        "Freeze a frame for NR tuning. Later game effects may update; temporal behaviour is not representative.");
 
     static const char* compareNames[] = { "Off", "Side by side", "Wipe" };
     int compare = (int) config->DlssNrCompare.value_or_default();

@@ -99,4 +99,4 @@ struct ModelStateDx12
     bool failed = false;
     const char* reason = "";
 };
-}
+} // namespace DlssNr::Detail

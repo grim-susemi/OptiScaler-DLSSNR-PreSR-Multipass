@@ -2,9 +2,9 @@
 #include "DlssNr_Dx12_State.h"
 
 bool DlssNr_Dx12::State::PrepareRunModels(ID3D12GraphicsCommandList* cmdList, ID3D12Device* device,
-                                        const DlssNrFrameInfo& frame, const D3D12_RESOURCE_DESC& desc,
-                                        DlssNr::ColorExtent native, DlssNr::ColorExtent work,
-                                        float workScale, unsigned int requestedPasses, bool spatial)
+                                          const DlssNrFrameInfo& frame, const D3D12_RESOURCE_DESC& desc,
+                                          DlssNr::ColorExtent native, DlssNr::ColorExtent work, float workScale,
+                                          unsigned int requestedPasses, bool spatial)
 {
     const auto& cfg = *Config::Instance();
     const auto width = native.width, height = native.height;
@@ -16,8 +16,8 @@ bool DlssNr_Dx12::State::PrepareRunModels(ID3D12GraphicsCommandList* cmdList, ID
 
     const bool resolutionChanged =
         nr.width != width || nr.height != height || nr.workWidth != workWidth || nr.workHeight != workHeight;
-    const bool placementChanged = nr.width != 0 && (nr.beforeUpscale != frame.BeforeUpscale ||
-                                                    nr.rayReconstruction != frame.RayReconstruction);
+    const bool placementChanged =
+        nr.width != 0 && (nr.beforeUpscale != frame.BeforeUpscale || nr.rayReconstruction != frame.RayReconstruction);
 
     // Tuning changes require rebuilding the feature, but not its scratch textures.
     const bool tuningChanged = !TuningMatchesFeature(cfg, requestedPasses);

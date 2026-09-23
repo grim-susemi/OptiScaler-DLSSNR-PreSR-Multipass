@@ -1265,9 +1265,8 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
         // XeFG must receive NR on its app-facing buffer and initialization queue.
         // The global queue may belong to XeFG's asynchronous display swapchain.
         // Keep the readiness check: a different, unfinished NR producer is still skipped.
-        DlssNr::ApplyToFinishedPicture(This, xeFgGamePicture
-                                                ? state.currentFG->GetCommandQueue()
-                                                : state.currentCommandQueue);
+        DlssNr::ApplyToFinishedPicture(This, xeFgGamePicture ? state.currentFG->GetCommandQueue()
+                                                             : state.currentCommandQueue);
         fg->Present();
     }
     else if (willPresent && fg != nullptr)

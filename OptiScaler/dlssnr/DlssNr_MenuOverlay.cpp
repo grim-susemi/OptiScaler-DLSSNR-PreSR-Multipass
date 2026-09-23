@@ -28,7 +28,8 @@ static void RenderSpatialOutlines()
     if (!layout.active)
         return;
     auto* draw = ImGui::GetForegroundDrawList();
-    const auto rectangle = [&](const Spatial::Rect& bounds, ImU32 color) {
+    const auto rectangle = [&](const Spatial::Rect& bounds, ImU32 color)
+    {
         const ImVec2 lo { bounds.left * screen.x, bounds.top * screen.y };
         const ImVec2 hi { bounds.right * screen.x, bounds.bottom * screen.y };
         draw->AddRect(lo, hi, IM_COL32(0, 0, 0, 220), 0, 0, 4.0f);
@@ -56,8 +57,7 @@ void RenderNrCompareTags()
         return;
 
     const bool swap = config->DlssNrCompareSwap.value_or_default();
-    const float split = mode == 1 ? 0.5f
-                                  : std::clamp(config->DlssNrCompareSplit.value_or_default(), 0.0f, 1.0f);
+    const float split = mode == 1 ? 0.5f : std::clamp(config->DlssNrCompareSplit.value_or_default(), 0.0f, 1.0f);
     const float splitX = split * screen.x;
 
     const float scale = std::clamp(config->DlssNrTagScale.value_or_default(), 0.5f, 5.0f);

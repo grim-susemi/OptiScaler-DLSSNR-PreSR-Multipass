@@ -33,7 +33,7 @@ namespace DlssNr
 {
 class ModelVk;
 class FinishedVk;
-}
+} // namespace DlssNr
 
 // NGX's Vulkan guide wrappers also state whether the image supports storage access.
 // Keep that metadata alongside the shared frame properties when rebuilding explicit resources.
@@ -62,8 +62,8 @@ class DlssNr_Vk : public Shader_Vk
     VkPipeline _spatialGuidesPipeline = VK_NULL_HANDLE;
     VkImageLayout _intermediateLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-    VkDeviceSize _slotStride = 0;   // sizeof(DlssNrConstants), rounded up to the device's alignment
-    uint32_t _slot = 0;             // next slot to hand out, wrapping
+    VkDeviceSize _slotStride = 0; // sizeof(DlssNrConstants), rounded up to the device's alignment
+    uint32_t _slot = 0;           // next slot to hand out, wrapping
 
     // Stands in for a resource a given mode does not read. One pixel, never sampled for its content,
     // present only because Vulkan will not accept an unwritten binding.
@@ -93,9 +93,8 @@ class DlssNr_Vk : public Shader_Vk
     void CaptureFinished(VkCommandBuffer cmd, const VkImageInfo& depth, const VkImageInfo& motion,
                          const DlssNrFrameInfo_Vk& frame, VkInstance instance);
     bool SpatialReady() const { return _spatialPipeline && _spatialGuidesPipeline; }
-    bool DispatchSpatial(VkCommandBuffer cmd, const DlssNr::Spatial::Constants& constants,
-                         VkImageView source, VkImageView second, VkImageView third,
-                         VkImageView target, VkImageView keep,
+    bool DispatchSpatial(VkCommandBuffer cmd, const DlssNr::Spatial::Constants& constants, VkImageView source,
+                         VkImageView second, VkImageView third, VkImageView target, VkImageView keep,
                          VkImageLayout sourceLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                          VkImageLayout secondLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                          VkImageLayout thirdLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);

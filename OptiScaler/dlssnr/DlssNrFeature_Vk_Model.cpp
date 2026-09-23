@@ -69,7 +69,7 @@ void ModelVk::Impl::ReleaseModels()
 }
 
 bool ModelVk::Impl::CreateModel(VkCommandBuffer commandBuffer, unsigned int passIndex, unsigned int width,
-                 unsigned int height, const Config& config)
+                                unsigned int height, const Config& config)
 {
     auto& model = state.models[passIndex];
     if (model.feature)
@@ -104,8 +104,7 @@ bool ModelVk::Impl::CreateModel(VkCommandBuffer commandBuffer, unsigned int pass
         for (unsigned int other = 0; other < DlssNr::MaxPassCount; ++other)
         {
             const auto* existing = state.models[other].feature;
-            if (other != passIndex && existing &&
-                (existing == model.feature || existing->Id == model.feature->Id))
+            if (other != passIndex && existing && (existing == model.feature || existing->Id == model.feature->Id))
             {
                 model.feature = nullptr; // owned by the other layer; do not double-release
                 Fail("the NVIDIA NGX driver reused a feature instead of creating an independent NR pass");
@@ -124,10 +123,10 @@ bool ModelVk::Impl::CreateModel(VkCommandBuffer commandBuffer, unsigned int pass
 }
 
 NVSDK_NGX_Result ModelVk::Impl::EvaluateModel(VkCommandBuffer commandBuffer, unsigned int passIndex,
-                              NVSDK_NGX_Resource_VK* colour, NVSDK_NGX_Resource_VK* depth,
-                              NVSDK_NGX_Resource_VK* motion, NVSDK_NGX_Resource_VK* output,
-                              unsigned int width, unsigned int height, const GuideRegions& guides,
-                              bool depthInverted, float mvX, float mvY, const Config& config)
+                                              NVSDK_NGX_Resource_VK* colour, NVSDK_NGX_Resource_VK* depth,
+                                              NVSDK_NGX_Resource_VK* motion, NVSDK_NGX_Resource_VK* output,
+                                              unsigned int width, unsigned int height, const GuideRegions& guides,
+                                              bool depthInverted, float mvX, float mvY, const Config& config)
 {
     auto& model = state.models[passIndex];
     auto* parameters = model.parameters;
@@ -226,8 +225,9 @@ void ModelVk::Impl::Shutdown()
     state.spatialStatus.clear();
 }
 
-bool ModelVk::Impl::PrepareModels(VkCommandBuffer cmdBuffer, const DlssNrFrameInfo_Vk& frame, uint32_t width, uint32_t height, uint32_t workWidth, uint32_t workHeight, float workScale, unsigned int passes,
-                                  const Spatial::Layout& spatial)
+bool ModelVk::Impl::PrepareModels(VkCommandBuffer cmdBuffer, const DlssNrFrameInfo_Vk& frame, uint32_t width,
+                                  uint32_t height, uint32_t workWidth, uint32_t workHeight, float workScale,
+                                  unsigned int passes, const Spatial::Layout& spatial)
 {
     auto& cfg = *Config::Instance();
     const auto instance = state.instance;
@@ -283,9 +283,8 @@ bool ModelVk::Impl::PrepareModels(VkCommandBuffer cmdBuffer, const DlssNrFrameIn
     for (unsigned int pass = 0; pass < passes; ++pass)
         profileChanged |= state.builtSettings[pass] != Profiles::PassSettings(cfg, pass);
     if (state.width != width || state.height != height || state.workWidth != workWidth ||
-        state.workHeight != workHeight || state.beforeSr != beforeSr ||
-        state.rayReconstruction != rayReconstruction || profileChanged ||
-        ((state.spatialLayout.requested || spatial.requested) && state.spatialLayout != spatial))
+        state.workHeight != workHeight || state.beforeSr != beforeSr || state.rayReconstruction != rayReconstruction ||
+        profileChanged || ((state.spatialLayout.requested || spatial.requested) && state.spatialLayout != spatial))
     {
         // This block releases the feature and frees the surfaces below IMMEDIATELY. A frame-size
         // change is already fenced by the game -- it recreates the swapchain around it -- but moving
@@ -376,8 +375,8 @@ bool ModelVk::Impl::PrepareModels(VkCommandBuffer cmdBuffer, const DlssNrFrameIn
             return false;
         }
 
-        LOG_INFO("DLSS-NR Vulkan: pass {} built at {}x{} (frame {}x{}, {} SR)", pass + 1, workWidth, workHeight,
-                 width, height, beforeSr ? "before" : "after");
+        LOG_INFO("DLSS-NR Vulkan: pass {} built at {}x{} (frame {}x{}, {} SR)", pass + 1, workWidth, workHeight, width,
+                 height, beforeSr ? "before" : "after");
         created = true;
         state.reset = true;
     }

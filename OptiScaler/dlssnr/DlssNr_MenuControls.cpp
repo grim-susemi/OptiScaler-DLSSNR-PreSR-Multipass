@@ -74,6 +74,12 @@ static void RenderSpatial(Config* config)
     Checkbox("Peripheral compression", config->DlssNrSpatialCompression);
     HelpMarker(
         "Keep more model detail in the centre and compress the edges. Model resolution still scales the whole image.");
+    bool preview = config->DlssNrDebugView.value_or_default() == 4;
+    if (ImGui::Checkbox("Preview", &preview))
+        config->DlssNrDebugView = preview ? 4u : 0u;
+    HelpMarker("Show the packed model input before spatial unpacking, scaled to fill the screen. "
+               "This is the same as the Compressed model input debug view. "
+               "Without active compression, shows the ordinary model input. Apply model must be enabled.");
     if (!config->DlssNrSpatialCompression.value_or_default())
         return;
 
@@ -427,11 +433,12 @@ void RenderInspect(Config* config)
     }
 
     static const char* debugNames[] = { "Off", "Proxy (what the model sees)", "Model output (raw)",
-                                        "Difference (amplified)" };
+                                        "Difference (amplified)", "Compressed model input" };
     int debugView = (int) config->DlssNrDebugView.value_or_default();
     if (ImGui::Combo("Debug view", &debugView, debugNames, IM_ARRAYSIZE(debugNames)))
         config->DlssNrDebugView = (uint32_t) debugView;
 
-    HelpMarker("Difference is amplified 20x. Grey means unchanged.");
+    HelpMarker("Difference is amplified 20x. Grey means unchanged. Proxy and raw model output use unpacked geometry. "
+               "Compressed model input shows the input before unpacking, scaled to fill the screen.");
 }
 } // namespace DlssNr::MenuSections

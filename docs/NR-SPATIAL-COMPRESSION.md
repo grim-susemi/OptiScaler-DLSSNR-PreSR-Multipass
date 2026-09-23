@@ -12,6 +12,8 @@ Model resolution remains the uniform scale for the entire input. Below 100%, cen
 
 The optional cyan centre and orange working-region outlines are drawn by the overlay after NR; they are never baked into model input. The status reports the effective model dimensions or why compression is unavailable.
 
+**Preview**, directly below Peripheral compression, selects the same view as **Debug view → Compressed model input** (`DebugView=4`). It displays the immutable input passed to NR before spatial unpacking, scaled to fill the screen, so peripheral squeezing is visible. The two controls stay in sync; unticking Preview turns debug view off. Without active compression it shows ordinary model input. Enable Apply model to see debug views. Existing Proxy and Model output views retain unpacked geometry.
+
 Settings live under `[DlssNr]`:
 
 | Key | Default |

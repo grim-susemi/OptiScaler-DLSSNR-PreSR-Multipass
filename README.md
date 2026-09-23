@@ -1,4 +1,4 @@
-> **v0.8.9 prerelease:** [optional peripheral compression and finished-picture queue candidate](docs/RELEASE-v0.8.9.md).
+> **v0.8.91 prerelease:** [compressed model input preview](docs/RELEASE-v0.8.91.md).
 
 <div align="center">
 
